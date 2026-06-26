@@ -33,7 +33,8 @@
       {
         "provider": "github",
         "owner": "slinnerb",
-        "repo": "gooping-with-friends"
+        "repo": "gooping-with-friends",
+        "releaseType": "release"
       }
     ],
     "files": [
