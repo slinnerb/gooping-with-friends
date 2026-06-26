@@ -456,7 +456,7 @@ div.wyr-opt { cursor: default; }
   position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
   background: var(--ink); color: #fff; padding: 10px 14px; border-radius: 999px;
-  font-size: 15px; font-weight: 500; box-shadow: var(--shadow); z-index: 60; max-width: 92vw;
+  font-size: 15px; font-weight: 500; box-shadow: var(--shadow); z-index: 65; max-width: 92vw;
   animation: update-pop 0.25s ease-out;
 }
 .update-banner.ready { background: linear-gradient(90deg, var(--good), var(--brand)); }

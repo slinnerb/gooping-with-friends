@@ -46,10 +46,25 @@ npm start    # open http://localhost:3000   (npm run dev to auto-restart)
 npm run dist
 ```
 Output lands in **`dist-app/`**:
-- **`Gooping with Friends Setup 0.1.0.exe`** — the installer to send your friends.
+- **`Gooping with Friends Setup <version>.exe`** — the installer to send your friends.
 - `win-unpacked/Gooping with Friends.exe` — a portable build you can run without installing.
 
 > The installer is **unsigned**, so Windows SmartScreen will say "Windows protected your PC." Click **More info → Run anyway**. (Code signing requires a paid certificate.)
+
+## 🔄 Automatic updates
+
+The desktop app keeps itself up to date. On launch — and hourly while it stays open — it checks this repo's [GitHub Releases](https://github.com/slinnerb/gooping-with-friends/releases) for a newer version, quietly downloads it in the background, and shows a **"Restart to update"** banner when it's ready. Nothing installs until the host clicks restart, so an update never interrupts a game in progress.
+
+**To ship an update**, bump `version` in `package.json`, commit, then:
+```bash
+export GH_TOKEN=$(gh auth token)   # a token with repo scope
+npm run publish                    # builds + uploads the release (installer + latest.yml)
+```
+Every host already running an update-capable build picks it up automatically.
+
+> **One-time catch:** a build installed *before* auto-update existed has no updater in it, so it can't upgrade itself — install an update-capable build manually once, and every release after that flows in on its own.
+
+> ⚠️ Updates ride the **public** GitHub Releases feed and the installer is **unsigned**, so update integrity rests on your GitHub account: anyone who can publish a release controls what installed copies download and run. Keep 2FA on and protect the default branch. Code-signing (see [SIGNING.md](SIGNING.md)) would close this gap.
 
 ## 🎮 Playing with far-away friends (different cities / public IPs)
 

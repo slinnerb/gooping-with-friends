@@ -553,20 +553,29 @@ function initUpdater() {
   const banner = $('#update-banner');
   const text = $('#update-banner-text');
   const restartBtn = $('#update-restart');
+  const dismissBtn = $('#update-dismiss');
+  if (!banner || !text || !restartBtn || !dismissBtn) return;
+  let pendingReady = false; // a downloaded update is waiting for an explicit restart
   const show = (msg, ready) => {
     text.textContent = msg;
     restartBtn.classList.toggle('hidden', !ready);
+    restartBtn.disabled = !ready; // gate the action on state, not just CSS visibility
     banner.classList.toggle('ready', !!ready);
     banner.classList.remove('hidden');
   };
   u.onAvailable((info) => show(`Downloading update v${info.version}…`, false));
   u.onProgress((p) => {
-    if (!banner.classList.contains('ready')) show(`Downloading update… ${p.percent}%`, false);
+    if (!pendingReady) show(`Downloading update… ${p.percent}%`, false);
   });
-  u.onDownloaded((info) => show(`Update v${info.version} is ready to install.`, true));
+  u.onDownloaded((info) => { pendingReady = true; show(`Update v${info.version} is ready to install.`, true); });
   u.onError(() => {}); // never let an update hiccup interrupt the party
   restartBtn.addEventListener('click', () => u.restart());
-  $('#update-dismiss').addEventListener('click', () => banner.classList.add('hidden'));
+  dismissBtn.addEventListener('click', () => banner.classList.add('hidden'));
+  // If they dismiss a ready update, resurface it when they refocus the app so the
+  // "Restart to update" affordance isn't lost for the rest of the session.
+  window.addEventListener('focus', () => {
+    if (pendingReady && banner.classList.contains('hidden')) show(text.textContent, true);
+  });
 }
 
 // ---- Wire up DOM ----

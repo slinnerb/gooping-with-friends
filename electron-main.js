@@ -8,6 +8,7 @@ const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let win;
+let updatesWired = false;
 
 async function createWindow() {
   // Start the game server inside this desktop app — the host IS the server.
@@ -25,6 +26,8 @@ async function createWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
@@ -55,8 +58,17 @@ function setupAutoUpdates() {
   // In dev (`npm run app`) there's no newer release to fetch, so skip silently.
   if (!app.isPackaged) return;
 
-  autoUpdater.autoDownload = true; // pull the new version quietly in the background
-  autoUpdater.autoInstallOnAppQuit = true; // if they quit before clicking "Restart", install on next quit
+  // Wire the global autoUpdater singleton exactly once. createWindow() can run
+  // again (e.g. macOS 'activate'), and re-registering would stack event
+  // listeners, duplicate the restart IPC handler (-> multiple quitAndInstall
+  // calls on one click), and leak a new hourly interval each time.
+  if (updatesWired) return;
+  updatesWired = true;
+
+  // Download new versions quietly in the background, but NEVER install without an
+  // explicit click — closing the app must not silently swap versions mid-party.
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('update-available', (info) =>
     sendToWindow('update:available', { version: info.version }));
@@ -64,15 +76,23 @@ function setupAutoUpdates() {
     sendToWindow('update:progress', { percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) =>
     sendToWindow('update:downloaded', { version: info.version }));
-  autoUpdater.on('error', (err) =>
-    sendToWindow('update:error', String((err && err.message) || err)));
+  autoUpdater.on('error', (err) => {
+    // Keep a main-process trail so a misconfigured feed isn't an invisible no-op.
+    console.error('[updater] error:', (err && err.stack) || err);
+    sendToWindow('update:error', String((err && err.message) || err));
+  });
 
-  // The renderer's "Restart to update" button asks us to quit & install.
-  ipcMain.on('update:restart', () => autoUpdater.quitAndInstall());
+  // The renderer's "Restart to update" button asks us to install + relaunch.
+  // (true, true) = silent NSIS install + auto-relaunch, so it feels like a restart.
+  ipcMain.on('update:restart', () => autoUpdater.quitAndInstall(true, true));
 
-  // Check on launch, then hourly in case the host keeps the app open across a release.
-  autoUpdater.checkForUpdates().catch(() => {});
-  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 60 * 60 * 1000);
+  const check = () =>
+    autoUpdater
+      .checkForUpdates()
+      .catch((e) => console.error('[updater] check failed:', (e && e.message) || e));
+
+  check(); // on launch
+  setInterval(check, 60 * 60 * 1000); // and hourly while the host keeps the app open
 }
 
 app.whenReady().then(createWindow);
