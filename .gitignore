@@ -1,0 +1,8 @@
+node_modules/
+dist-app/
+.claude/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+dev-app-update.yml

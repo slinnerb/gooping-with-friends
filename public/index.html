@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#6a5cff" />
+  <title>Gooping with Friends</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫠</text></svg>" />
+</head>
+<body>
+  <div id="connlost" class="connlost hidden">Reconnecting…</div>
+  <button id="btn-mute" class="mute-btn" title="Toggle sound" aria-label="Toggle sound">🔊</button>
+  <button id="btn-tv" class="mute-btn tv-btn" title="TV / big-screen mode" aria-label="TV mode">📺</button>
+  <button id="btn-music" class="mute-btn music-btn" title="Toggle music" aria-label="Toggle music">🎵</button>
+  <button id="btn-players" class="mute-btn players-btn" title="Players & standings" aria-label="Players">👥</button>
+
+  <div id="standings-overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2>🏆 Tonight's standings</h2>
+      <div id="standings-list"></div>
+      <button class="btn secondary small mt hidden" id="btn-reset-standings">Reset standings</button>
+      <button class="btn mt" id="btn-close-standings">Close</button>
+    </div>
+  </div>
+  <canvas id="confetti"></canvas>
+  <div class="app">
+
+    <!-- HOME -->
+    <section id="screen-home" class="screen active">
+      <div class="brand">
+        <div class="logo">🫠</div>
+        <h1>Gooping with Friends</h1>
+        <p>Filthy party games for terrible friends. 🔞 18+ — crude content ahead.</p>
+        <div id="career" class="career"></div>
+      </div>
+
+      <div class="card">
+        <label class="field">
+          <span>Your name</span>
+          <input type="text" id="name-input" maxlength="20" placeholder="e.g. Alex" autocomplete="off" />
+        </label>
+        <div class="field">
+          <span>Pick your avatar</span>
+          <div class="emoji-pick" id="emoji-pick"></div>
+        </div>
+        <label class="field">
+          <span>Custom room code (optional)</span>
+          <input type="text" id="create-code" maxlength="6" placeholder="leave blank for random" autocomplete="off" />
+        </label>
+        <button class="btn" id="btn-create">Create a game</button>
+
+        <div class="divider">or join one</div>
+
+        <label class="field">
+          <span>Invite code</span>
+          <input type="text" id="join-code" class="code-input" maxlength="6" placeholder="CODE" autocomplete="off" />
+        </label>
+        <button class="btn accent" id="btn-join">Join game</button>
+
+        <div class="divider">playing with far-away friends?</div>
+        <label class="field">
+          <span>Paste a friend's game link</span>
+          <input type="text" id="join-link" placeholder="https://....loca.lt/?code=ABCD" autocomplete="off" />
+        </label>
+        <button class="btn secondary" id="btn-openlink">Open link</button>
+
+        <p id="home-error" class="subtle center mt" style="color:var(--bad)"></p>
+      </div>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="screen-lobby" class="screen">
+      <div class="code-box">
+        <div class="label">Invite code</div>
+        <div class="code" id="lobby-code">----</div>
+        <div class="actions">
+          <button class="btn ghost small" id="btn-copy-code">Copy code</button>
+          <button class="btn ghost small" id="btn-copy-link">Copy link</button>
+        </div>
+        <button class="btn ghost small" id="btn-online">🌍 Play online</button>
+        <div id="online-status" class="online-status"></div>
+        <div class="qr-wrap">
+          <div id="qr-box"></div>
+          <div class="qr-label" id="qr-label">Scan to join</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Players <span class="subtle" id="player-count"></span></h2>
+        <div class="players" id="player-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>Choose a game</h2>
+        <div id="content-toggle"></div>
+        <div class="catalog" id="catalog"></div>
+        <div id="len-picker"></div>
+        <div id="custom-area"></div>
+        <div id="cat-picker"></div>
+        <p class="subtle center mt" id="lobby-hint"></p>
+        <button class="btn good mt" id="btn-start">Start game</button>
+        <button class="btn secondary mt" id="btn-leave">Leave game</button>
+      </div>
+    </section>
+
+    <!-- GAME -->
+    <section id="screen-game" class="screen">
+      <div id="game-root"></div>
+    </section>
+
+    <!-- RESULTS -->
+    <section id="screen-results" class="screen">
+      <div class="brand"><h1>🏆 Results</h1></div>
+      <div class="card">
+        <div class="podium" id="podium"></div>
+        <div class="result-list" id="result-list"></div>
+        <button class="btn mt" id="btn-replay">🔁 Play again (same game)</button>
+        <button class="btn accent mt" id="btn-save-img">📸 Save results image</button>
+        <button class="btn good mt" id="btn-again">Back to lobby</button>
+        <button class="btn secondary mt" id="btn-results-leave">Leave game</button>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="update-banner" class="update-banner hidden" role="status">
+    <span class="update-emoji">🆕</span>
+    <span id="update-banner-text">A new version is ready.</span>
+    <button id="update-restart" class="btn good small hidden">Restart to update</button>
+    <button id="update-dismiss" class="update-x" title="Dismiss" aria-label="Dismiss">✕</button>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/vendor/qrcode.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

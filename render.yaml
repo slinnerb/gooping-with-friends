@@ -1,0 +1,13 @@
+# One-click deploy to Render (https://render.com).
+# Push this repo to GitHub, then: Render → New → Blueprint → pick the repo.
+# Gives you a permanent public URL like https://gooping-with-friends.onrender.com
+services:
+  - type: web
+    name: gooping-with-friends
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev --no-audit --no-fund
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

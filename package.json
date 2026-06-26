@@ -1,0 +1,64 @@
+{
+  "name": "gooping-with-friends",
+  "version": "0.1.0",
+  "description": "Gooping with Friends — a multiplayer party-game platform you host yourself and play with friends using invite codes.",
+  "type": "module",
+  "main": "electron-main.js",
+  "author": "slinnerb",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "app": "electron .",
+    "dist": "electron-builder",
+    "publish": "electron-builder --publish always"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "express": "^4.19.2",
+    "localtunnel": "^2.0.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^25.0.0",
+    "qrcode-generator": "^1.4.4"
+  },
+  "build": {
+    "appId": "com.goopingwithfriends.app",
+    "productName": "Gooping with Friends",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "slinnerb",
+        "repo": "gooping-with-friends"
+      }
+    ],
+    "files": [
+      "server.js",
+      "electron-main.js",
+      "preload.cjs",
+      "src/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/cloudflared.exe",
+        "to": "cloudflared.exe"
+      }
+    ],
+    "directories": {
+      "output": "dist-app"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
