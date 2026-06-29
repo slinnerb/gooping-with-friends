@@ -207,6 +207,14 @@ export default {
     }
   },
 
+  onLeave(room, playerId, ctx) {
+    const g = room.game;
+    if (!g) return;
+    if (playerId === g.drawerId) { endTurn(room, ctx); return; }
+    if (g.sub === 'drawing' && everyoneGuessed(room)) endTurn(room, ctx);
+    else ctx.broadcast();
+  },
+
   view(room, playerId) {
     const g = room.game;
     if (!g) return null;

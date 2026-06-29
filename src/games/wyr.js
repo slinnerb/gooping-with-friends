@@ -168,6 +168,13 @@ export default {
     }
   },
 
+  onLeave(room, _playerId, ctx) {
+    const g = room.game;
+    if (!g || g.sub !== 'vote') return;
+    if (allVoted(room)) toReveal(room, ctx);
+    else ctx.broadcast();
+  },
+
   view(room, playerId) {
     const g = room.game;
     if (!g) return null;

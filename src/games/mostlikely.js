@@ -108,6 +108,7 @@ export default {
     if (action.type === 'vote') {
       if (g.sub !== 'vote') return;
       const target = String(action.target || '');
+      if (target === playerId) return; // no voting for yourself
       const tp = room.players.get(target);
       if (!tp || !tp.connected) return;
       g.votes.set(playerId, target);
@@ -118,6 +119,13 @@ export default {
       if (g.sub === 'vote') toReveal(room, ctx);
       else next(room, ctx);
     }
+  },
+
+  onLeave(room, _playerId, ctx) {
+    const g = room.game;
+    if (!g || g.sub !== 'vote') return;
+    if (allVoted(room)) toReveal(room, ctx);
+    else ctx.broadcast();
   },
 
   view(room, playerId) {

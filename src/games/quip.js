@@ -173,6 +173,13 @@ export default {
     }
   },
 
+  onLeave(room, _playerId, ctx) {
+    const g = room.game;
+    if (!g) return;
+    if (g.sub === 'answer') { if (allAnswered(room)) toVote(room, ctx); else ctx.broadcast(); }
+    else if (g.sub === 'vote') { if (allVoted(room)) toReveal(room, ctx); else ctx.broadcast(); }
+  },
+
   view(room, playerId) {
     const g = room.game;
     if (!g) return null;

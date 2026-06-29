@@ -8,6 +8,7 @@ let prevSub = null;
 let rafId = null;
 let deadline = 0;
 let total = 1;
+let amHost = false;
 
 function stopTimer() { if (rafId) cancelAnimationFrame(rafId); rafId = null; }
 function tickTimer() {
@@ -99,13 +100,17 @@ export default {
   update(view) {
     const g = view.game;
     if (!g) return;
-    const key = `${g.sub}|${g.round}|${g.isReader ? 1 : 0}|${g.youGuessed ? 1 : 0}|${g.hasClue ? 1 : 0}`;
+    amHost = !!(view.you && view.you.isHost);
+    const key = `${g.sub}|${g.round}|${g.isReader ? 1 : 0}|${g.youGuessed ? 1 : 0}|${g.hasClue ? 1 : 0}|${amHost ? 1 : 0}`;
     const body = $('#wl-body', root);
     if (key !== prevKey) {
       prevKey = key;
       if (g.sub === 'clue') body.innerHTML = renderClue(g);
       else if (g.sub === 'guess') body.innerHTML = renderGuess(g);
       else body.innerHTML = renderReveal(g);
+      if (amHost && (g.sub === 'clue' || g.sub === 'guess')) {
+        body.insertAdjacentHTML('beforeend', '<button class="btn secondary small mt" id="wl-skip">Skip round ▸ (host)</button>');
+      }
 
       if (g.sub !== prevSub && g.sub === 'reveal') sound.win();
       prevSub = g.sub;
@@ -142,6 +147,7 @@ function onInput(e) {
 }
 
 function onClick(e) {
+  if (e.target.closest('#wl-skip')) { api.send({ type: 'next' }); sound.select(); return; }
   if (e.target.closest('#wl-clue-send')) {
     const ta = $('#wl-clue', root);
     const text = ta && ta.value.trim();

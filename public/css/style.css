@@ -146,6 +146,12 @@ input.code-input {
 .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); margin: 18px 0; font-size: 14px; }
 .divider::before, .divider::after { content: ''; flex: 1; height: 2px; background: var(--line); border-radius: 2px; }
 
+/* ---- "Open in app" banner (shown when a shared link is opened in a browser) ---- */
+.app-banner { background: rgba(255,255,255,0.12); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; }
+.app-banner .ab-text { display: block; color: #fff; font-size: 14px; margin-bottom: 8px; }
+.app-banner .ab-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.app-banner .ab-actions .btn { margin: 0; }
+
 /* ---- Lobby ---- */
 .code-box {
   text-align: center;
@@ -266,6 +272,7 @@ input.code-input {
 .mute-btn.on { background: var(--brand); }
 .mute-btn.off { opacity: 0.4; }
 .career { color: #fff; opacity: 0.9; font-size: 13px; margin-top: 8px; }
+.app-version { color: #fff; opacity: 0.5; font-size: 12px; margin-top: 6px; letter-spacing: 0.3px; }
 
 /* ---- Overlay (standings panel) ---- */
 .overlay { position: fixed; inset: 0; background: rgba(20, 10, 40, 0.62); backdrop-filter: blur(3px); z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; }

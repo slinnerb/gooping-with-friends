@@ -265,6 +265,21 @@ export default {
     }
   },
 
+  onLeave(room, playerId, ctx) {
+    const g = room.game;
+    if (!g) return;
+    if (g.mode === 'trivia') {
+      if (g.tSub !== 'question') return;
+      const conn = ctx.connectedPlayers();
+      if (conn.length && conn.every((p) => g.answers.has(p.id))) triviaReveal(room, ctx);
+      else ctx.broadcast();
+    } else {
+      if (playerId === g.drawerId) { drawEnd(room, ctx); return; }
+      if (g.dSub === 'drawing' && everyoneGuessed(room)) drawEnd(room, ctx);
+      else ctx.broadcast();
+    }
+  },
+
   view(room, playerId) {
     const g = room.game;
     if (!g) return null;

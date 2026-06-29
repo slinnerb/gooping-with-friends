@@ -1,4 +1,11 @@
 // Small shared helpers.
+import { randomUUID } from 'crypto';
+
+// A per-player session secret: bound to a playerId on first join and required
+// on every subsequent (re)join, so a leaked/guessed playerId can't be impersonated.
+export function makeSecret() {
+  return randomUUID();
+}
 
 // Unambiguous alphabet for invite codes (no O/0, I/1, etc.).
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

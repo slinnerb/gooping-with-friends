@@ -165,6 +165,19 @@ export default {
     }
   },
 
+  onLeave(room, playerId, ctx) {
+    const g = room.game;
+    if (!g) return;
+    if (playerId === g.readerId) {
+      if (g.sub === 'clue') next(room, ctx);
+      else if (g.sub === 'guess') toReveal(room, ctx);
+      else ctx.broadcast();
+      return;
+    }
+    if (g.sub === 'guess' && everyoneGuessed(room)) toReveal(room, ctx);
+    else ctx.broadcast();
+  },
+
   view(room, playerId) {
     const g = room.game;
     if (!g) return null;

@@ -9,6 +9,7 @@ const EMOJIS = ['🤪', '😈', '💀', '🔥', '👽', '🤡', '🦄', '🐸', 
 
 const store = {
   playerId: ensureId(),
+  secret: ensureSecret(),
   name: localStorage.getItem('pwf.name') || '',
   emoji: localStorage.getItem('pwf.emoji') || '',
   view: null,
@@ -30,6 +31,19 @@ function ensureId() {
     localStorage.setItem('pwf.id', id);
   }
   return id;
+}
+
+// Per-device secret that authenticates this playerId on every (re)join, so a
+// broadcast playerId can't be used to impersonate us (e.g. take over as host).
+function ensureSecret() {
+  let s = localStorage.getItem('pwf.secret');
+  if (!s) {
+    s = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 's_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    localStorage.setItem('pwf.secret', s);
+  }
+  return s;
 }
 
 // Track which room we're in, persisted so a refresh rejoins automatically.
@@ -146,7 +160,7 @@ function renderCustom(v, isHost, selected) {
   if (!area) return;
   let type = null;
   if (isHost && selected) {
-    if (selected.id === 'trivia' && v.config && v.config.category === 'custom') type = 'q';
+    if (selected.id === 'trivia' && v.config && (v.config.categories || []).includes('custom')) type = 'q';
     else if (selected.id === 'drawguess') type = 'w';
     else if (selected.id === 'quip') type = 'p';
   }
@@ -287,6 +301,15 @@ function renderLobby(v) {
   store.shareLink = `${shareBaseFor(v)}/?code=${v.code}`;
   renderQR(store.shareLink);
   renderOnline(v);
+
+  // Most friends aren't on the same Wi-Fi, so the host's game should be reachable
+  // over the internet by default. Auto-start the online tunnel once per room (if
+  // it isn't already up / starting / errored) instead of waiting for a tap.
+  if (v.you && v.you.isHost && !v.public && !v.publicStarting && !v.publicError
+      && store.autoOnlineRoom !== v.code) {
+    store.autoOnlineRoom = v.code;
+    socket.emit('tunnel:start');
+  }
   if (store.prevPlayers && v.players.length > store.prevPlayers) sound.join();
   store.prevPlayers = v.players.length;
   $('#player-count').textContent = `(${v.players.length})`;
@@ -318,9 +341,9 @@ function renderLobby(v) {
   if (selected && selected.categories) {
     const clean = !!(v.config && v.config.clean);
     const cats = selected.categories.filter((c) => !(clean && c.adult));
-    const chosen = (v.config && v.config.category) || cats[0].id;
-    picker.innerHTML = `<div class="cats-label">Category</div><div class="cats">${cats
-      .map((c) => `<button class="cat-chip ${c.id === chosen ? 'selected' : ''}" data-cat="${c.id}" ${isHost ? '' : 'disabled'}>${c.emoji} ${escapeHtml(c.name)}</button>`)
+    const chosen = new Set((v.config && v.config.categories) || ['everything']);
+    picker.innerHTML = `<div class="cats-label">Categories <span class="subtle">(pick one or more)</span></div><div class="cats">${cats
+      .map((c) => `<button class="cat-chip ${chosen.has(c.id) ? 'selected' : ''}" data-cat="${c.id}" ${isHost ? '' : 'disabled'}>${c.emoji} ${escapeHtml(c.name)}</button>`)
       .join('')}</div>`;
   } else {
     picker.innerHTML = '';
@@ -340,7 +363,10 @@ function renderLobby(v) {
   renderCustom(v, isHost, selected);
 
   const connected = v.players.filter((p) => p.connected).length;
-  const needCustomQ = selected && selected.id === 'trivia' && v.config && v.config.category === 'custom' && !(v.config.customQuestionCount > 0);
+  const cfgCats = (v.config && v.config.categories) || [];
+  const needCustomQ = selected && selected.id === 'trivia'
+    && cfgCats.length === 1 && cfgCats[0] === 'custom'
+    && !(v.config.customQuestionCount > 0);
   const startBtn = $('#btn-start');
   let hint = '';
   let canStart = false;
@@ -422,9 +448,16 @@ function renderResults(v) {
       </div>`)
     .join('');
 
-  const againBtn = $('#btn-again');
-  againBtn.classList.toggle('hidden', !v.you.isHost);
-  $('#btn-replay').classList.toggle('hidden', !v.you.isHost);
+  const isHost = v.you.isHost;
+  $('#btn-again').classList.toggle('hidden', !isHost);
+  $('#btn-replay').classList.toggle('hidden', !isHost);
+  const winner = ranked[0];
+  const status = $('#results-status');
+  if (status) {
+    status.textContent = isHost
+      ? `🏆 ${winner ? winner.name : 'Someone'} wins! Replay the same game, or adjust the settings & pick a new one.`
+      : `🏆 ${winner ? winner.name : 'Someone'} wins! Waiting for the host to replay or pick a new game…`;
+  }
 
   const key = v.code + ':' + ranked.map((p) => p.id + p.score).join(',');
   if (key !== lastResultsKey) {
@@ -517,7 +550,7 @@ function createGame() {
   const code = $('#create-code').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   rememberName(name);
   homeError('');
-  socket.emit('room:create', { playerId: store.playerId, name, emoji: store.emoji, code }, (res) => {
+  socket.emit('room:create', { playerId: store.playerId, secret: store.secret, name, emoji: store.emoji, code }, (res) => {
     if (res && !res.ok) homeError(res.error || 'Could not create game.');
     else if (res && res.ok) setActiveCode(res.code);
   });
@@ -530,7 +563,7 @@ function joinGame() {
   if (code.length < 3 || code.length > 6) { homeError('Enter the invite code (3–6 characters).'); return; }
   rememberName(name);
   homeError('');
-  socket.emit('room:join', { playerId: store.playerId, name, emoji: store.emoji, code }, (res) => {
+  socket.emit('room:join', { playerId: store.playerId, secret: store.secret, name, emoji: store.emoji, code }, (res) => {
     if (res && !res.ok) { homeError(res.error || 'Could not join.'); setActiveCode(null); }
     else if (res && res.ok) setActiveCode(res.code);
   });
@@ -644,7 +677,17 @@ function bind() {
   });
   $('#cat-picker').addEventListener('click', (e) => {
     const chip = e.target.closest('[data-cat]');
-    if (chip && !chip.disabled) socket.emit('game:config', { category: chip.dataset.cat });
+    if (!chip || chip.disabled) return;
+    const id = chip.dataset.cat;
+    const cur = (store.view && store.view.config && store.view.config.categories) || ['everything'];
+    let next;
+    if (id === 'everything') next = ['everything']; // "the whole mix" is exclusive
+    else if (cur.includes('everything')) next = [id]; // first specific pick drops the mix
+    else if (cur.includes(id)) next = cur.filter((c) => c !== id); // toggle off
+    else next = cur.concat(id); // add to the mix
+    if (!next.length) next = ['everything'];
+    socket.emit('game:config', { categories: next });
+    sound.select();
   });
   $('#len-picker').addEventListener('click', (e) => {
     const chip = e.target.closest('[data-len]');
@@ -699,7 +742,7 @@ socket.on('connect', () => {
   $('#connlost').classList.add('hidden');
   // Re-bind this fresh socket to our room after a reconnect or page refresh.
   if (store.activeCode && store.name) {
-    socket.emit('room:join', { playerId: store.playerId, name: store.name, emoji: store.emoji, code: store.activeCode }, (res) => {
+    socket.emit('room:join', { playerId: store.playerId, secret: store.secret, name: store.name, emoji: store.emoji, code: store.activeCode }, (res) => {
       if (res && !res.ok) setActiveCode(null); // room is gone — fall back to home
     });
   }
@@ -709,14 +752,45 @@ socket.on('disconnect', () => {
   $('#connlost').classList.remove('hidden');
 });
 
+// If this page was opened from a shared invite link in a plain browser, offer to
+// reopen it in the installed desktop app (via the gooping:// protocol). We skip
+// this inside the app itself and on phones, where there's no desktop app to open.
+function maybeOfferApp(inviteUrl) {
+  const ua = navigator.userAgent || '';
+  if (/electron/i.test(ua)) return;                  // already running in the app
+  if (/Mobi|Android|iPhone|iPad/i.test(ua)) return;  // no desktop app on phones
+  const banner = $('#app-banner');
+  if (!banner) return;
+  const appLink = 'gooping://join?u=' + encodeURIComponent(inviteUrl);
+  banner.classList.remove('hidden');
+  // One tap launches the app if it's registered the link, and harmlessly does
+  // nothing if it isn't — meanwhile the game keeps working in the browser below.
+  $('#ab-open').addEventListener('click', () => { location.href = appLink; });
+  $('#ab-browser').addEventListener('click', () => banner.classList.add('hidden'));
+}
+
+// Show the app version on the home screen (and reflect updates if the desktop
+// app's preload bridge is present). Falls back silently if the endpoint is down.
+function initVersion() {
+  const el = $('#app-version');
+  if (!el) return;
+  fetch('/api/version')
+    .then((r) => r.json())
+    .then((d) => { if (d && d.version) el.textContent = 'v' + d.version + (window.updater ? ' · auto-updates on launch' : ''); })
+    .catch(() => {});
+}
+
 // ---- Init ----
 bind();
+initVersion();
 (function autojoin() {
   const params = new URLSearchParams(location.search);
   const code = (params.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
   if (code) {
+    const inviteUrl = location.href; // capture before we strip ?code from the bar
     $('#join-code').value = code;
     history.replaceState(null, '', location.pathname);
+    maybeOfferApp(inviteUrl);
     if (store.name) { setTimeout(joinGame, 150); }
     else $('#name-input').focus();
   }

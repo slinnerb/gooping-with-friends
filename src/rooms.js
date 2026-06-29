@@ -1,9 +1,36 @@
-import { makeCode } from './util.js';
+import { makeCode, makeSecret } from './util.js';
 import { games, getGame } from './games/index.js';
 import { startTunnel } from './tunnel.js';
 
 const MAX_PLAYERS = 16;
 const EMPTY_ROOM_TTL = 1000 * 60 * 10; // delete abandoned rooms after 10 min
+const MAX_ROOMS = 5000; // backstop against room-creation abuse (the host can be internet-facing)
+const KICK_COOLDOWN = 1000 * 60 * 2; // a kicked player can't rejoin for 2 minutes
+
+// Avatars must be one of the picker emojis — never trust arbitrary client strings
+// (an unescaped emoji is rendered into innerHTML on the client, so this is a guard).
+const ALLOWED_EMOJI = new Set([
+  '🤪', '😈', '💀', '🔥', '👽', '🤡', '🦄', '🐸', '🐙', '🦖', '🍑', '🍆', '🌮', '🍕',
+  '🤖', '👹', '🦊', '🐼', '🐧', '🫠', '💩', '👻', '🎃', '🐝',
+]);
+function cleanEmojiOf(emoji) {
+  return typeof emoji === 'string' && ALLOWED_EMOJI.has(emoji) ? emoji : '';
+}
+
+// Sanitize a host-chosen list of trivia category ids. Keeps it a small, deduped
+// array of short strings; 'everything' is exclusive (the whole mix), so if it's
+// present we collapse to just that. Never trust the client to send something sane.
+function normalizeCategories(list) {
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    if (typeof raw !== 'string') continue;
+    const id = raw.slice(0, 40);
+    if (id && !out.includes(id)) out.push(id);
+    if (out.length >= 30) break;
+  }
+  if (!out.length || out.includes('everything')) return ['everything'];
+  return out;
+}
 
 // Parse host-provided custom trivia. One per line:
 //   Question? | Correct answer | Wrong | Wrong | Wrong
@@ -99,9 +126,12 @@ export class RoomManager {
 
   // ---- room lifecycle -------------------------------------------------
 
-  createRoom(socket, { playerId, name, emoji, code: desiredRaw }) {
+  createRoom(socket, data) {
+    const playerId = String((data && data.playerId) || '');
+    if (!playerId) return { error: 'Missing player id.' };
+    if (this.rooms.size >= MAX_ROOMS) return { error: 'Server is busy — try again shortly.' };
     let code;
-    const desired = String(desiredRaw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const desired = String((data && data.code) || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (desired) {
       if (desired.length < 3 || desired.length > 6) {
         return { error: 'Custom code must be 3–6 letters or numbers.' };
@@ -111,8 +141,10 @@ export class RoomManager {
       }
       code = desired;
     } else {
+      let tries = 0;
       do {
-        code = makeCode(4);
+        code = makeCode(tries < 12 ? 4 : 5);
+        tries += 1;
       } while (this.rooms.has(code));
     }
 
@@ -121,7 +153,7 @@ export class RoomManager {
       hostId: playerId,
       phase: 'lobby',
       gameId: null,
-      config: { category: 'everything', length: 15, clean: false, customQuestions: [], customWords: [], customPrompts: [] },
+      config: { categories: ['everything'], length: 15, clean: false, customQuestions: [], customWords: [], customPrompts: [] },
       players: new Map(),
       game: null,
       timers: new Set(),
@@ -129,35 +161,56 @@ export class RoomManager {
       createdAt: Date.now(),
     };
     this.rooms.set(code, room);
-    this.addPlayer(room, socket, playerId, name, emoji);
+    const res = this.addPlayer(room, socket, data);
+    if (res.error) {
+      this.rooms.delete(code);
+      return res;
+    }
     this.broadcast(room);
     return { room };
   }
 
-  joinRoom(socket, { playerId, name, emoji, code }) {
-    const room = this.getRoom(code);
+  joinRoom(socket, data) {
+    const room = this.getRoom(data && data.code);
     if (!room) return { error: 'No game found with that code.' };
 
+    const playerId = String((data && data.playerId) || '');
+    if (room.kicks) {
+      const until = room.kicks.get(playerId);
+      if (until && until > Date.now()) return { error: 'You were removed from this game.' };
+    }
     const existing = room.players.get(playerId);
     if (!existing) {
       const connectedCount = [...room.players.values()].filter((p) => p.connected).length;
       if (connectedCount >= MAX_PLAYERS) return { error: 'This game is full.' };
     }
 
-    this.addPlayer(room, socket, playerId, name, emoji);
+    const res = this.addPlayer(room, socket, data);
+    if (res.error) return res;
     this.broadcast(room);
     return { room };
   }
 
-  addPlayer(room, socket, playerId, name, emoji) {
+  // Adds or re-attaches a player. Identity is authenticated by a per-player
+  // secret: once a playerId has a bound secret, every later (re)join must present
+  // it — so a known/broadcast playerId can't be used to impersonate (host takeover).
+  addPlayer(room, socket, data) {
+    const playerId = String((data && data.playerId) || '');
+    if (!playerId) return { error: 'Missing player id.' };
     if (room.deleteTimer) {
       clearTimeout(room.deleteTimer);
       room.deleteTimer = null;
     }
     let player = room.players.get(playerId);
-    const cleanName = String(name || '').trim().slice(0, 20) || 'Player';
-    const cleanEmoji = typeof emoji === 'string' ? emoji.trim().slice(0, 8) : '';
+    const cleanName = String((data && data.name) || '').trim().slice(0, 20) || 'Player';
+    const cleanEmoji = cleanEmojiOf(data && data.emoji);
+    const secret = String((data && data.secret) || '').slice(0, 80);
+
     if (player) {
+      if (player.secret && secret !== player.secret) {
+        return { error: 'That player is already in this game — clear the page or pick a fresh start.' };
+      }
+      if (!player.secret && secret) player.secret = secret;
       player.socketId = socket.id;
       player.connected = true;
       if (cleanName) player.name = cleanName;
@@ -167,6 +220,7 @@ export class RoomManager {
         id: playerId,
         name: cleanName,
         emoji: cleanEmoji,
+        secret: secret || makeSecret(),
         socketId: socket.id,
         connected: true,
         score: 0,
@@ -176,13 +230,13 @@ export class RoomManager {
       };
       room.players.set(playerId, player);
     }
-    // First player in an empty room becomes host.
-    if (![...room.players.values()].some((p) => p.id === room.hostId)) {
+    // First player in an empty room becomes host (only count connected holders).
+    if (![...room.players.values()].some((p) => p.id === room.hostId && p.connected)) {
       room.hostId = playerId;
     }
     this.sockets.set(socket.id, { code: room.code, playerId });
     socket.join(room.code);
-    return player;
+    return { player };
   }
 
   handleDisconnect(socket) {
@@ -192,19 +246,26 @@ export class RoomManager {
     const room = this.getRoom(ref.code);
     if (!room) return;
     const player = room.players.get(ref.playerId);
-    if (player && player.socketId === socket.id) {
-      player.connected = false;
-    }
+    // Only act if this is the player's *current* socket (ignore a replaced/stale one).
+    const left = !!(player && player.socketId === socket.id);
+    if (left) player.connected = false;
+
     // Migrate host if the host dropped and someone else is still connected.
-    if (room.hostId === ref.playerId) {
+    if (left && room.hostId === ref.playerId) {
       const next = [...room.players.values()].find((p) => p.connected);
       if (next) room.hostId = next.id;
     }
-    // If nobody is connected, schedule cleanup.
+    // Let the active game advance if this departure satisfied its round.
+    if (left) this.maybeOnLeave(room, ref.playerId);
+
+    // If nobody is connected, schedule cleanup — but keep game timers running so a
+    // quick reconnect resumes instead of freezing; clear them only at delete time.
     const anyConnected = [...room.players.values()].some((p) => p.connected);
-    if (!anyConnected) {
-      this.clearTimers(room);
-      room.deleteTimer = setTimeout(() => this.rooms.delete(room.code), EMPTY_ROOM_TTL);
+    if (!anyConnected && !room.deleteTimer) {
+      room.deleteTimer = setTimeout(() => {
+        this.clearTimers(room);
+        this.rooms.delete(room.code);
+      }, EMPTY_ROOM_TTL);
     }
     this.broadcast(room);
   }
@@ -226,7 +287,22 @@ export class RoomManager {
       this.rooms.delete(room.code);
       return;
     }
+    this.maybeOnLeave(room, ref.playerId);
     this.broadcast(room);
+  }
+
+  // If a game is in progress, give it a chance to advance when a player departs
+  // (so a missing answerer/voter/drawer/reader doesn't stall the round on a timer).
+  maybeOnLeave(room, playerId) {
+    if (!room || room.phase !== 'playing') return;
+    const game = getGame(room.gameId);
+    if (game && typeof game.onLeave === 'function') {
+      try {
+        game.onLeave(room, playerId, this.ctx(room));
+      } catch (err) {
+        console.error('onLeave error', err);
+      }
+    }
   }
 
   // ---- host / game controls ------------------------------------------
@@ -250,8 +326,10 @@ export class RoomManager {
     const ref = this.sockets.get(socket.id);
     if (!room || !ref || !this.isHost(room, ref.playerId)) return;
     if (room.phase !== 'lobby') return;
-    if (config && typeof config.category === 'string') {
-      room.config.category = config.category.slice(0, 40);
+    if (config && Array.isArray(config.categories)) {
+      room.config.categories = normalizeCategories(config.categories);
+    } else if (config && typeof config.category === 'string') {
+      room.config.categories = normalizeCategories([config.category]);
     }
     if (config && config.length != null && [3, 5, 8, 15, 30].includes(Number(config.length))) {
       room.config.length = Number(config.length);
@@ -330,6 +408,10 @@ export class RoomManager {
       targetSocket.leave(room.code);
       this.sockets.delete(targetSocket.id);
     }
+    // Brief cooldown so a kicked player can't instantly rejoin.
+    room.kicks = room.kicks || new Map();
+    room.kicks.set(targetId, Date.now() + KICK_COOLDOWN);
+    this.maybeOnLeave(room, targetId);
     this.broadcast(room);
   }
 
@@ -420,7 +502,7 @@ export class RoomManager {
       hostId: room.hostId,
       // Sanitized config — never ship the custom questions (they contain answers).
       config: {
-        category: room.config.category,
+        categories: room.config.categories,
         length: room.config.length,
         clean: room.config.clean,
         customQuestionCount: room.config.customQuestions.length,
@@ -447,7 +529,12 @@ export class RoomManager {
         lengths: g.lengths || null,
       })),
     };
-    if (game && room.phase !== 'lobby' && typeof game.view === 'function') {
+    // Only build the in-game view while actually playing. At 'results' the game
+    // state can be past its end (e.g. trivia's index has run off the last
+    // question); calling view() then would throw and abort the results
+    // broadcast — leaving everyone stuck on the final screen. The results screen
+    // renders from players/scores and never needs game.view.
+    if (game && room.phase === 'playing' && typeof game.view === 'function') {
       view.game = game.view(room, playerId);
     }
     return view;

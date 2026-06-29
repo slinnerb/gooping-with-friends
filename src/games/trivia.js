@@ -410,9 +410,47 @@ export function everythingPool(clean) {
   return buildPool('everything', clean);
 }
 
+// Build the question pool for a room, honoring the host's (possibly multiple)
+// chosen categories. 'everything' is exclusive — the whole mix. Otherwise we
+// union the selected banks; 'custom' folds the host's own questions in too.
+function poolFor(room) {
+  const clean = !!(room.config && room.config.clean);
+  let ids = (room.config && room.config.categories) || ['everything'];
+  if (!Array.isArray(ids) || !ids.length) ids = ['everything'];
+
+  let pool;
+  if (ids.includes('everything')) {
+    pool = buildPool('everything', clean).slice();
+  } else {
+    const banks = ids
+      .filter((id) => id !== 'custom' && BANKS[id] && !(clean && ADULT_CATS.has(id)))
+      .map((id) => BANKS[id]);
+    pool = banks.length ? dedupeQuestions(banks.flat()) : [];
+  }
+  if (ids.includes('custom')) pool = pool.concat(room.config.customQuestions || []);
+  if (!pool.length) pool = buildPool('everything', clean).slice(); // never end up empty
+  return dedupeQuestions(pool);
+}
+
+// Whether the chosen categories are *only* an empty custom set — the one case we
+// must block at start (every other mix has built-in questions to fall back on).
+export function needsCustomQuestions(room) {
+  const ids = (room.config && room.config.categories) || ['everything'];
+  return Array.isArray(ids) && ids.length === 1 && ids[0] === 'custom'
+    && !((room.config.customQuestions || []).length);
+}
+
 function categoryName(id) {
   const c = CATEGORIES.find((x) => x.id === id);
   return c ? c.name : 'A Bit of Everything';
+}
+
+// Display label for the chosen category mix (shown in the game header).
+function categoryLabel(room) {
+  const ids = (room.config && room.config.categories) || ['everything'];
+  if (!Array.isArray(ids) || !ids.length || ids.includes('everything')) return 'A Bit of Everything';
+  if (ids.length === 1) return categoryName(ids[0]);
+  return `${ids.length} categories`;
 }
 
 function leaderboard(room) {
@@ -474,18 +512,15 @@ export default {
   lengths: LENGTHS,
 
   init(room, ctx) {
-    const catId = (room.config && room.config.category) || 'everything';
     const length = normalizeLength(room.config && room.config.length);
-    const clean = !!(room.config && room.config.clean);
-    let pool =
-      catId === 'custom' ? (room.config.customQuestions || []).slice() : buildPool(catId, clean);
-    if (catId === 'custom' && pool.length === 0) {
+    let pool = poolFor(room);
+    if (pool.length === 0) {
       pool = [{ q: 'No custom questions yet — add some in the lobby!', options: ['OK', 'Got it', 'Sure', 'Fine'], answer: 0 }];
     }
     const count = Math.min(length, pool.length);
     room.game = {
-      category: catId,
-      categoryName: categoryName(catId),
+      categories: (room.config && room.config.categories) || ['everything'],
+      categoryName: categoryLabel(room),
       questions: pickSome(pool, count).map(shuffleQuestion),
       index: 0,
       sub: 'question',
@@ -516,10 +551,19 @@ export default {
     }
   },
 
+  onLeave(room, _playerId, ctx) {
+    const g = room.game;
+    if (!g || g.sub !== 'question') return;
+    const conn = ctx.connectedPlayers();
+    if (conn.length && conn.every((p) => g.answers.has(p.id))) reveal(room, ctx);
+    else ctx.broadcast();
+  },
+
   view(room, playerId) {
     const g = room.game;
     if (!g) return null;
     const question = g.questions[g.index];
+    if (!question) return null; // index ran past the last question (game is ending)
     const myAnswer = g.answers.get(playerId);
     const base = {
       sub: g.sub,

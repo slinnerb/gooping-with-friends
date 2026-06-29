@@ -1,12 +1,20 @@
 import http from 'http';
 import os from 'os';
 import path from 'path';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import { Server } from 'socket.io';
 import { RoomManager } from './src/rooms.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// App version, read once at boot so the UI can display it and the host can see
+// at a glance which build their friends are joining.
+let APP_VERSION = '0.0.0';
+try {
+  APP_VERSION = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || APP_VERSION;
+} catch { /* keep default */ }
 
 // Best-guess LAN URL so friends on the same Wi-Fi can scan/join.
 function lanUrl(port) {
@@ -23,11 +31,34 @@ export function startServer(port = process.env.PORT || 3000) {
   return new Promise((resolve) => {
     const app = express();
     const server = http.createServer(app);
-    const io = new Server(server, { cors: { origin: '*' } });
+    const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6 });
     const manager = new RoomManager(io);
+
+    // Security headers. CSP is the backstop for any user-text injection: scripts are
+    // 'self' only (no inline), framing is blocked. Inline styles are allowed because
+    // the UI uses many style="" attributes (avatar colors, bar widths); the Google
+    // Fonts + data: QR/favicon sources are whitelisted.
+    app.use((_req, res, next) => {
+      res.setHeader('Content-Security-Policy', [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src 'self' ws: wss:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'none'",
+      ].join('; '));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      next();
+    });
 
     app.use(express.static(path.join(__dirname, 'public')));
     app.get('/health', (_req, res) => res.json({ ok: true, rooms: manager.rooms.size }));
+    app.get('/api/version', (_req, res) => res.json({ version: APP_VERSION }));
     app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
     io.on('connection', (socket) => {

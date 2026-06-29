@@ -32,7 +32,8 @@ function topBar(g, title) {
 
 function renderVote(view) {
   const g = view.game;
-  const players = view.players.filter((p) => p.connected);
+  const meId = view.you && view.you.id;
+  const players = view.players.filter((p) => p.connected && p.id !== meId);
   if (!g.youVoted && !isPresenter()) {
     const btns = players
       .map((p) => `<button class="ml-pick ${g.yourVote === p.id ? 'chosen' : ''}" data-id="${p.id}">

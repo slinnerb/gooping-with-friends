@@ -1,6 +1,6 @@
 {
   "name": "gooping-with-friends",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "description": "Gooping with Friends — a multiplayer party-game platform you host yourself and play with friends using invite codes.",
   "type": "module",
   "main": "electron-main.js",
@@ -29,6 +29,12 @@
   "build": {
     "appId": "com.goopingwithfriends.app",
     "productName": "Gooping with Friends",
+    "protocols": [
+      {
+        "name": "Gooping with Friends",
+        "schemes": ["gooping"]
+      }
+    ],
     "publish": [
       {
         "provider": "github",

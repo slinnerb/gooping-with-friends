@@ -22,7 +22,7 @@ export function avatarColor(id) {
 
 // What to show inside an avatar circle: the player's chosen emoji, else initials.
 export function avatarInner(p) {
-  return p && p.emoji ? p.emoji : initials(p && p.name);
+  return p && p.emoji ? escapeHtml(p.emoji) : initials(p && p.name);
 }
 
 // TV / presenter mode: this device acts as the shared big screen (no controls).
