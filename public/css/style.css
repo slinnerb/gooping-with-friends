@@ -203,6 +203,7 @@ input.code-input {
 .catalog { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
 @media (max-width: 520px) { .catalog { grid-template-columns: 1fr; } }
 .game-card {
+  position: relative;
   text-align: left;
   background: var(--surface-2);
   border: 3px solid transparent;
@@ -211,6 +212,19 @@ input.code-input {
   cursor: pointer;
   transition: transform 0.12s, border-color 0.12s, background 0.12s;
 }
+/* Play-order badge shown on cards that are queued in the playlist. */
+.game-card .order-badge {
+  position: absolute; top: 10px; right: 10px;
+  min-width: 24px; height: 24px; padding: 0 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--brand); color: #fff; font-weight: 800; font-size: 14px;
+  border-radius: 999px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+/* Playlist tray — the back-to-back sequence under the catalog. */
+#playlist-tray { margin: 12px 0 4px; }
+.pl-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.pl-chip { background: var(--surface-2); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 14px; }
+.pl-arrow { color: var(--muted); font-weight: 700; }
 .game-card:hover { transform: translateY(-2px); }
 .game-card.selected { border-color: var(--brand); background: #fff; }
 .game-card.locked { cursor: default; opacity: 0.85; }

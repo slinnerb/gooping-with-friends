@@ -321,11 +321,17 @@ function renderLobby(v) {
 
   renderContentToggle(v, isHost);
 
+  // Tap games to queue them — one to play solo, several to play back-to-back as
+  // a playlist with a combined score. The number badge shows the play order.
+  const playlist = v.playlist || [];
   $('#catalog').innerHTML = v.catalog
     .map((g) => {
-      const selected = g.id === v.gameId;
+      const pos = playlist.indexOf(g.id);
+      const inList = pos !== -1;
       const lockClass = isHost ? '' : 'locked';
-      return `<button class="game-card ${selected ? 'selected' : ''} ${lockClass}" data-game="${g.id}" ${isHost ? '' : 'disabled'}>
+      const badge = inList ? `<div class="order-badge">${pos + 1}</div>` : '';
+      return `<button class="game-card ${inList ? 'selected' : ''} ${lockClass}" data-game="${g.id}" ${isHost ? '' : 'disabled'}>
+        ${badge}
         <div class="emoji">${g.emoji}</div>
         <div class="gname">${escapeHtml(g.name)}</div>
         <div class="gdesc">${escapeHtml(g.description)}</div>
@@ -334,26 +340,46 @@ function renderLobby(v) {
     })
     .join('');
 
-  const selected = v.catalog.find((g) => g.id === v.gameId);
+  // The queued games (in order) — drives the tray, the pickers and start-gating.
+  const queued = playlist.map((id) => v.catalog.find((g) => g.id === id)).filter(Boolean);
+  const selected = queued[0] || null;
 
-  // Category picker (only for games that define categories, e.g. Trivia)
+  // Playlist tray — only meaningful once 2+ games are queued.
+  const tray = $('#playlist-tray');
+  if (tray) {
+    if (queued.length > 1) {
+      tray.classList.remove('hidden');
+      tray.innerHTML = `<div class="cats-label">Playlist <span class="subtle">(plays back-to-back · combined score)</span></div>
+        <div class="pl-chips">${queued
+          .map((g, i) => `<span class="pl-chip">${i + 1}. ${g.emoji} ${escapeHtml(g.name)}</span>`)
+          .join('<span class="pl-arrow">→</span>')}</div>
+        ${isHost ? '<button class="btn ghost small mt" id="btn-clear-playlist">Clear playlist</button>' : ''}`;
+    } else {
+      tray.classList.add('hidden');
+      tray.innerHTML = '';
+    }
+  }
+
+  // Category picker — shown if any queued game uses categories (Trivia).
+  const catGame = queued.find((g) => g.categories);
   const picker = $('#cat-picker');
-  if (selected && selected.categories) {
+  if (catGame) {
     const clean = !!(v.config && v.config.clean);
-    const cats = selected.categories.filter((c) => !(clean && c.adult));
+    const cats = catGame.categories.filter((c) => !(clean && c.adult));
     const chosen = new Set((v.config && v.config.categories) || ['everything']);
-    picker.innerHTML = `<div class="cats-label">Categories <span class="subtle">(pick one or more)</span></div><div class="cats">${cats
+    picker.innerHTML = `<div class="cats-label">Categories <span class="subtle">(pick one or more · Trivia)</span></div><div class="cats">${cats
       .map((c) => `<button class="cat-chip ${chosen.has(c.id) ? 'selected' : ''}" data-cat="${c.id}" ${isHost ? '' : 'disabled'}>${c.emoji} ${escapeHtml(c.name)}</button>`)
       .join('')}</div>`;
   } else {
     picker.innerHTML = '';
   }
 
-  // Round-length picker (Short / Regular / Marathon)
+  // Round-length picker — shown if any queued game uses round length.
+  const lenGame = queued.find((g) => g.lengths);
   const lenPicker = $('#len-picker');
-  if (selected && selected.lengths) {
+  if (lenGame) {
     const chosenLen = (v.config && v.config.length) || 15;
-    lenPicker.innerHTML = `<div class="cats-label">Round length</div><div class="cats">${selected.lengths
+    lenPicker.innerHTML = `<div class="cats-label">Round length</div><div class="cats">${lenGame.lengths
       .map((l) => `<button class="cat-chip ${l.id === chosenLen ? 'selected' : ''}" data-len="${l.id}" ${isHost ? '' : 'disabled'}>${escapeHtml(l.name)} · ${l.id}</button>`)
       .join('')}</div>`;
   } else {
@@ -364,20 +390,26 @@ function renderLobby(v) {
 
   const connected = v.players.filter((p) => p.connected).length;
   const cfgCats = (v.config && v.config.categories) || [];
-  const needCustomQ = selected && selected.id === 'trivia'
+  const triviaQueued = queued.some((g) => g.id === 'trivia');
+  const needCustomQ = triviaQueued
     && cfgCats.length === 1 && cfgCats[0] === 'custom'
     && !(v.config.customQuestionCount > 0);
+  const need = queued.length ? Math.max(...queued.map((g) => g.minPlayers || 1)) : 1;
+  const shortGame = queued.find((g) => (g.minPlayers || 1) > connected);
   const startBtn = $('#btn-start');
   let hint = '';
   let canStart = false;
   if (!isHost) {
-    hint = selected ? `Waiting for the host to start ${selected.name}…` : 'Waiting for the host to choose a game…';
-  } else if (!selected) {
-    hint = 'Pick a game above to begin.';
-  } else if (connected < selected.minPlayers) {
-    hint = `${selected.name} needs at least ${selected.minPlayers} players (you have ${connected}).`;
+    hint = queued.length ? 'Waiting for the host to start…' : 'Waiting for the host to choose a game…';
+  } else if (!queued.length) {
+    hint = 'Tap a game above to begin (tap more than one to build a playlist).';
+  } else if (connected < need && shortGame) {
+    hint = `${shortGame.name} needs at least ${shortGame.minPlayers} players (you have ${connected}).`;
   } else if (needCustomQ) {
     hint = 'Add at least one custom question below, then tap Save.';
+  } else if (queued.length > 1) {
+    hint = `Ready! Tap start to play ${queued.length} games back-to-back.`;
+    canStart = true;
   } else {
     hint = `Ready! Tap start to play ${selected.name}.`;
     canStart = true;
@@ -385,6 +417,7 @@ function renderLobby(v) {
   $('#lobby-hint').textContent = hint;
   startBtn.disabled = !canStart;
   startBtn.classList.toggle('hidden', !isHost);
+  startBtn.textContent = queued.length > 1 ? `Start playlist (${queued.length} games) ▸` : 'Start game';
 }
 
 function playerRow(p, v, isHost) {
@@ -449,14 +482,41 @@ function renderResults(v) {
     .join('');
 
   const isHost = v.you.isHost;
+  const session = v.session;
+  const isPlaylist = !!(session && session.total > 1);
+  const moreGames = !!(session && session.index < session.total - 1); // a next game is queued
+  const winnerName = ranked[0] ? ranked[0].name : 'Someone';
+
+  // Next-game button (host, mid-playlist). Advances without resetting scores.
+  const nextBtn = $('#btn-next-game');
+  nextBtn.classList.toggle('hidden', !(isHost && moreGames));
+  if (isHost && moreGames) {
+    nextBtn.textContent = `▸ Next: ${session.nextGameEmoji || ''} ${session.nextGameName} (game ${session.index + 2} of ${session.total})`;
+  }
+
+  // Replay restarts the whole playlist from scratch; relabel accordingly.
+  const replayBtn = $('#btn-replay');
+  replayBtn.classList.toggle('hidden', !isHost);
+  replayBtn.textContent = isPlaylist ? '🔁 Replay whole playlist' : '🔁 Play again (same game)';
+
   $('#btn-again').classList.toggle('hidden', !isHost);
-  $('#btn-replay').classList.toggle('hidden', !isHost);
-  const winner = ranked[0];
+
   const status = $('#results-status');
   if (status) {
-    status.textContent = isHost
-      ? `🏆 ${winner ? winner.name : 'Someone'} wins! Replay the same game, or adjust the settings & pick a new one.`
-      : `🏆 ${winner ? winner.name : 'Someone'} wins! Waiting for the host to replay or pick a new game…`;
+    if (moreGames) {
+      const prog = `Game ${session.index + 1} of ${session.total} done`;
+      status.textContent = isHost
+        ? `🏆 ${winnerName} leads! ${prog} — tap ▸ Next for ${session.nextGameName}. Scores carry over.`
+        : `🏆 ${winnerName} leads! ${prog} — waiting for the host to start ${session.nextGameName}…`;
+    } else if (isPlaylist) {
+      status.textContent = isHost
+        ? `🏆 ${winnerName} wins the playlist (${session.total} games)! Replay it, or adjust the settings.`
+        : `🏆 ${winnerName} wins the ${session.total}-game playlist! Waiting for the host…`;
+    } else {
+      status.textContent = isHost
+        ? `🏆 ${winnerName} wins! Replay the same game, or adjust the settings & pick a new one.`
+        : `🏆 ${winnerName} wins! Waiting for the host to replay or pick a new game…`;
+    }
   }
 
   const key = v.code + ':' + ranked.map((p) => p.id + p.score).join(',');
@@ -673,7 +733,14 @@ function bind() {
 
   $('#catalog').addEventListener('click', (e) => {
     const card = e.target.closest('[data-game]');
-    if (card && !card.disabled) socket.emit('game:select', card.dataset.game);
+    if (card && !card.disabled) { socket.emit('game:select', card.dataset.game); sound.select(); }
+  });
+  // "Clear playlist" lives inside the (re-rendered) tray — toggle every queued game off.
+  $('#playlist-tray').addEventListener('click', (e) => {
+    if (!e.target.closest('#btn-clear-playlist')) return;
+    const list = (store.view && store.view.playlist) || [];
+    list.forEach((id) => socket.emit('game:select', id));
+    sound.select();
   });
   $('#cat-picker').addEventListener('click', (e) => {
     const chip = e.target.closest('[data-cat]');
@@ -709,6 +776,7 @@ function bind() {
   $('#btn-leave').addEventListener('click', leaveGame);
   $('#btn-again').addEventListener('click', () => socket.emit('game:lobby'));
   $('#btn-replay').addEventListener('click', () => socket.emit('game:start'));
+  $('#btn-next-game').addEventListener('click', () => { socket.emit('game:next'); sound.select(); });
   $('#btn-save-img').addEventListener('click', saveResultsImage);
   $('#btn-results-leave').addEventListener('click', leaveGame);
 }

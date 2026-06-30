@@ -86,6 +86,7 @@ export function startServer(port = process.env.PORT || 3000) {
       socket.on('game:select', (gameId) => manager.selectGame(socket, gameId));
       socket.on('game:config', (config) => manager.setConfig(socket, config));
       socket.on('game:start', () => manager.startGame(socket));
+      socket.on('game:next', () => manager.nextInPlaylist(socket));
       socket.on('game:lobby', () => manager.backToLobby(socket));
       socket.on('game:action', (action) => manager.gameAction(socket, action));
 

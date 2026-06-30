@@ -153,6 +153,8 @@ export class RoomManager {
       hostId: playerId,
       phase: 'lobby',
       gameId: null,
+      playlist: [],   // ordered gameIds the host has queued up to play back-to-back
+      session: null,  // active run: { games:[...], index } — set on start, cleared in lobby
       config: { categories: ['everything'], length: 15, clean: false, customQuestions: [], customWords: [], customPrompts: [] },
       players: new Map(),
       game: null,
@@ -311,13 +313,25 @@ export class RoomManager {
     return room && room.hostId === playerId;
   }
 
+  // Toggle a game in the host's playlist. One game = play just that (today's
+  // behavior); several = play them back-to-back as one session with a combined
+  // (cumulative) leaderboard. gameId stays = playlist[0] so the lobby's config
+  // pickers and single-game start logic keep working.
   selectGame(socket, gameId) {
     const room = this.roomOfSocket(socket);
     const ref = this.sockets.get(socket.id);
     if (!room || !ref || !this.isHost(room, ref.playerId)) return;
     if (room.phase !== 'lobby') return;
-    room.gameId = getGame(gameId) ? gameId : null;
-    if (room.gameId === 'crazy') room.config.length = 30; // the "30 round mode"
+    if (!getGame(gameId)) return;
+    const i = room.playlist.indexOf(gameId);
+    if (i === -1) {
+      if (room.playlist.length >= 8) return; // cap the queue
+      room.playlist.push(gameId);
+    } else {
+      room.playlist.splice(i, 1);
+    }
+    room.gameId = room.playlist[0] || null;
+    if (room.playlist.includes('crazy')) room.config.length = 30; // crazy is the 30-round mode
     this.broadcast(room);
   }
 
@@ -353,14 +367,38 @@ export class RoomManager {
     const room = this.roomOfSocket(socket);
     const ref = this.sockets.get(socket.id);
     if (!room || !ref || !this.isHost(room, ref.playerId)) return;
-    const game = getGame(room.gameId);
-    if (!game) return;
+    // The playlist is the source of truth; fall back to the single gameId.
+    const list = room.playlist.length ? room.playlist.slice() : (room.gameId ? [room.gameId] : []);
+    if (!list.length || list.some((id) => !getGame(id))) return;
+    // Need enough players for every game queued (e.g. Quip needs 3+).
     const connected = [...room.players.values()].filter((p) => p.connected);
-    if (connected.length < (game.minPlayers || 1)) return;
+    const need = Math.max(...list.map((id) => getGame(id).minPlayers || 1));
+    if (connected.length < need) return;
 
     this.clearTimers(room);
+    room.session = { games: list, index: 0 };
+    room.gameId = list[0];
     room.phase = 'playing';
-    for (const p of room.players.values()) p.score = 0;
+    for (const p of room.players.values()) p.score = 0; // reset once, at the start of the playlist
+    getGame(room.gameId).init(room, this.ctx(room));
+    this.broadcast(room);
+  }
+
+  // Host advances to the next game in the playlist from the results screen.
+  // Scores are NOT reset — they carry over into the combined leaderboard.
+  nextInPlaylist(socket) {
+    const room = this.roomOfSocket(socket);
+    const ref = this.sockets.get(socket.id);
+    if (!room || !ref || !this.isHost(room, ref.playerId)) return;
+    if (room.phase !== 'results' || !room.session) return;
+    const s = room.session;
+    if (s.index >= s.games.length - 1) return; // already on the last game
+    s.index += 1;
+    const game = getGame(s.games[s.index]);
+    if (!game) return;
+    room.gameId = s.games[s.index];
+    this.clearTimers(room);
+    room.phase = 'playing';
     game.init(room, this.ctx(room));
     this.broadcast(room);
   }
@@ -372,6 +410,7 @@ export class RoomManager {
     this.clearTimers(room);
     room.phase = 'lobby';
     room.game = null;
+    room.session = null; // end the run; keep room.playlist so they can replay/edit it
     this.broadcast(room);
   }
 
@@ -529,6 +568,23 @@ export class RoomManager {
         lengths: g.lengths || null,
       })),
     };
+    // Playlist the host is queuing in the lobby (ordered gameIds).
+    view.playlist = room.playlist || [];
+    // Active multi-game run, if any — drives the "Next game" flow on results.
+    if (room.session) {
+      const s = room.session;
+      const nextId = s.index < s.games.length - 1 ? s.games[s.index + 1] : null;
+      const nextGame = nextId ? getGame(nextId) : null;
+      view.session = {
+        index: s.index,
+        total: s.games.length,
+        games: s.games,
+        nextGameId: nextId,
+        nextGameName: nextGame ? nextGame.name : null,
+        nextGameEmoji: nextGame ? nextGame.emoji : null,
+      };
+    }
+
     // Only build the in-game view while actually playing. At 'results' the game
     // state can be past its end (e.g. trivia's index has run off the last
     // question); calling view() then would throw and abort the results
