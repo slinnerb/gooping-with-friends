@@ -154,7 +154,7 @@ export default {
   id: 'crazy',
   name: 'Crazy Mode',
   emoji: '🤪',
-  description: 'EVERYTHING at once — trivia questions and draw & guess rounds mixed together. 30 rounds of chaos (pick a shorter length to warm up).',
+  description: 'EVERYTHING at once — trivia questions and draw & guess rounds mixed together. Pick your length (Marathon = 30 rounds of chaos).',
   minPlayers: 1,
   maxPlayers: 16,
   lengths: LENGTHS,

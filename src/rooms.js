@@ -331,7 +331,6 @@ export class RoomManager {
       room.playlist.splice(i, 1);
     }
     room.gameId = room.playlist[0] || null;
-    if (room.playlist.includes('crazy')) room.config.length = 30; // crazy is the 30-round mode
     this.broadcast(room);
   }
 
@@ -485,7 +484,12 @@ export class RoomManager {
       clearTimers: () => this.clearTimers(room),
       end: () => {
         this.clearTimers(room);
-        this.tallySession(room);
+        // In a playlist, scores accumulate across games (they are NOT reset
+        // between them). Folding the running total into the session standings
+        // at every game-end would double-count it, so we only tally once the
+        // whole run is complete — the final score is the run's true total.
+        const runComplete = !room.session || room.session.index >= room.session.games.length - 1;
+        if (runComplete) this.tallySession(room);
         room.phase = 'results';
         this.broadcast(room);
       },

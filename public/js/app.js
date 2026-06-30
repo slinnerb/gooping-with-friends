@@ -134,10 +134,10 @@ function renderCareer() {
   const s = getCareer();
   el.textContent = s.games ? `🏆 Your career: ${s.games} game${s.games === 1 ? '' : 's'} · ${s.wins || 0} win${s.wins === 1 ? '' : 's'} · ${s.points || 0} pts` : '';
 }
-function recordCareer(view, ranked) {
+function recordCareer(view, ranked, gamesPlayed = 1) {
   const s = getCareer();
-  s.games = (s.games || 0) + 1;
-  s.points = (s.points || 0) + (view.you ? view.you.score : 0);
+  s.games = (s.games || 0) + gamesPlayed; // a playlist counts as all of its games
+  s.points = (s.points || 0) + (view.you ? view.you.score : 0); // cumulative run total
   if (ranked[0] && view.you && ranked[0].id === view.you.id && ranked[0].score > 0) s.wins = (s.wins || 0) + 1;
   localStorage.setItem('pwf.stats', JSON.stringify(s));
 }
@@ -522,7 +522,9 @@ function renderResults(v) {
   const key = v.code + ':' + ranked.map((p) => p.id + p.score).join(',');
   if (key !== lastResultsKey) {
     lastResultsKey = key;
-    recordCareer(v, ranked);
+    // Only bank career stats once the run is over (a playlist shows results
+    // between games too — recording each would inflate games/points).
+    if (!moreGames) recordCareer(v, ranked, isPlaylist ? session.total : 1);
     confetti();
     sound.win();
   }
