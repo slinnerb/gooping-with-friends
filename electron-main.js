@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import electronUpdater from 'electron-updater';
@@ -72,7 +72,17 @@ async function createWindow() {
   // Start the game server inside this desktop app — the host IS the server.
   // Port 0 = let the OS pick any free port, so we never clash with whatever is
   // already using 3000 on the user's machine. We load whatever port we get.
-  const { port, manager } = await startServer(process.env.PORT || 0);
+  let port, manager;
+  try {
+    ({ port, manager } = await startServer(process.env.PORT || 0));
+  } catch (err) {
+    // A fatal listen error (EACCES, etc.) now rejects instead of hanging — show
+    // the user a real error and quit rather than sitting on a blank window.
+    console.error('Server failed to start:', err);
+    dialog.showErrorBox('Gooping with Friends', 'Could not start the game server:\n' + ((err && err.message) || err));
+    app.quit();
+    return;
+  }
 
   win = new BrowserWindow({
     width: 1180,
@@ -193,7 +203,11 @@ if (!app.requestSingleInstanceLock()) {
   // macOS delivers protocol links via this event rather than argv.
   app.on('open-url', (e, url) => { e.preventDefault(); handleDeepLink(url); });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(createWindow).catch((err) => {
+    console.error('Startup failed:', err);
+    try { dialog.showErrorBox('Gooping with Friends', 'Startup failed:\n' + ((err && err.message) || err)); } catch { /* ignore */ }
+    app.quit();
+  });
 }
 
 app.on('activate', () => {

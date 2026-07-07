@@ -39,8 +39,29 @@ function lanUrl(port) {
   return `http://${best}:${port}`;
 }
 
+// A stray throw or rejected promise anywhere (often driven by untrusted player
+// input over the tunnel) would otherwise crash the host's whole app and end the
+// party. Log and swallow instead — individual handlers stay wrapped for state
+// consistency, but this is the last line of defence for the process itself.
+let crashGuardsInstalled = false;
+function installCrashGuards() {
+  if (crashGuardsInstalled) return;
+  crashGuardsInstalled = true;
+  process.on('uncaughtException', (err) => console.error('uncaughtException:', err));
+  process.on('unhandledRejection', (err) => console.error('unhandledRejection:', err));
+}
+
+// Per-socket flood guard. The host is internet-facing, so a single player can
+// otherwise spam events that each fan out to the whole room. ~90/sec comfortably
+// covers legit bursts (drawing strokes) while capping cheap amplification; a
+// sustained flood well past that gets the socket dropped.
+const RATE_WINDOW_MS = 1000;
+const RATE_MAX = 90;
+const RATE_DISCONNECT = 250;
+
 export function startServer(port = process.env.PORT || 3000) {
-  return new Promise((resolve) => {
+  installCrashGuards();
+  return new Promise((resolve, reject) => {
     const app = express();
     const server = http.createServer(app);
     const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6 });
@@ -74,6 +95,19 @@ export function startServer(port = process.env.PORT || 3000) {
     app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
     io.on('connection', (socket) => {
+      // Per-socket sliding-window rate limit — silently drops over-rate packets
+      // and disconnects a socket that floods well past the ceiling.
+      let winStart = Date.now();
+      let winCount = 0;
+      socket.use((_packet, next) => {
+        const now = Date.now();
+        if (now - winStart > RATE_WINDOW_MS) { winStart = now; winCount = 0; }
+        winCount += 1;
+        if (winCount > RATE_DISCONNECT) { socket.disconnect(true); return; }
+        if (winCount > RATE_MAX) return; // drop this event without dispatching
+        next();
+      });
+
       socket.on('room:create', (data, cb) => {
         const result = manager.createRoom(socket, data || {});
         if (typeof cb === 'function') {
@@ -97,9 +131,13 @@ export function startServer(port = process.env.PORT || 3000) {
 
       socket.on('game:select', (gameId) => manager.selectGame(socket, gameId));
       socket.on('game:config', (config) => manager.setConfig(socket, config));
-      socket.on('game:start', () => manager.startGame(socket));
+      socket.on('game:start', (_data, cb) => {
+        const res = manager.startGame(socket);
+        if (typeof cb === 'function') cb(res || { ok: true });
+      });
       socket.on('game:next', () => manager.nextInPlaylist(socket));
       socket.on('game:lobby', () => manager.backToLobby(socket));
+      socket.on('results:vote', (choice) => manager.voteReplay(socket, choice));
       socket.on('game:action', (action) => manager.gameAction(socket, action));
 
       socket.on('tunnel:start', () => {
@@ -128,7 +166,11 @@ export function startServer(port = process.env.PORT || 3000) {
           console.warn(`  ⚠ Port ${p} is busy — using a random free port instead.`);
           attempt(0);
         } else {
+          // Any other listen error (EACCES, EADDRNOTAVAIL, …) is fatal — reject
+          // so the caller (Electron) can surface it instead of hanging on a
+          // blank window waiting for a promise that never settles.
           console.error('Server failed to start:', err);
+          reject(err);
         }
       });
       server.listen(p);

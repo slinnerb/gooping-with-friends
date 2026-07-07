@@ -20,9 +20,11 @@ let prevGuessed = 0;
 let rafId = null;
 let deadline = 0;
 let total = 1;
+let lastMsgSig = '';   // avoid rebuilding the chat list when it hasn't changed
+let lastBoardSig = ''; // avoid rebuilding the mini-board when it hasn't changed
 
 // Bound handlers (kept for cleanup).
-let onStroke, onClear, onPointerDown, onPointerMove, onPointerUp, onResizeWin;
+let onStroke, onClear, onMsg, onPointerDown, onPointerMove, onPointerUp, onResizeWin;
 
 function stopTimer() { if (rafId) cancelAnimationFrame(rafId); rafId = null; }
 
@@ -93,17 +95,26 @@ function shell() {
   `;
 }
 
-function renderMessages(messages, you) {
+function msgRowHtml(m) {
+  if (m.kind === 'system') return `<div class="msg system">${escapeHtml(m.text)}</div>`;
+  if (m.kind === 'correct') return `<div class="msg correct">✅ ${escapeHtml(m.text)}</div>`;
+  if (m.kind === 'reveal') return `<div class="msg reveal">🎯 ${escapeHtml(m.text)}</div>`;
+  return `<div class="msg"><b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}</div>`;
+}
+
+function renderMessages(messages) {
   const box = $('#dg-msgs', root);
   if (!box) return;
-  box.innerHTML = messages
-    .map((m) => {
-      if (m.kind === 'system') return `<div class="msg system">${escapeHtml(m.text)}</div>`;
-      if (m.kind === 'correct') return `<div class="msg correct">✅ ${escapeHtml(m.text)}</div>`;
-      if (m.kind === 'reveal') return `<div class="msg reveal">🎯 ${escapeHtml(m.text)}</div>`;
-      return `<div class="msg"><b>${escapeHtml(m.name)}:</b> ${escapeHtml(m.text)}</div>`;
-    })
-    .join('');
+  box.innerHTML = messages.map(msgRowHtml).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+// Append a single chat line from the lightweight dg:msg delta (wrong guesses),
+// avoiding a full-state broadcast + rebuild. The next full update reconciles.
+function appendMessage(m) {
+  const box = $('#dg-msgs', root);
+  if (!box) return;
+  box.insertAdjacentHTML('beforeend', msgRowHtml(m));
   box.scrollTop = box.scrollHeight;
 }
 
@@ -166,8 +177,13 @@ export default {
     onClear = ({ turnId }) => {
       if (turnId === curTurnId) clearBoard();
     };
+    // Lightweight chat delta for wrong guesses (no full-state broadcast).
+    onMsg = ({ turnId, msg }) => {
+      if (turnId === curTurnId && msg) appendMessage(msg);
+    };
     api.socket.on('dg:stroke', onStroke);
     api.socket.on('dg:clear', onClear);
+    api.socket.on('dg:msg', onMsg);
 
     highlightTools();
   },
@@ -181,6 +197,7 @@ export default {
     if (g.turnId !== curTurnId) {
       curTurnId = g.turnId;
       prevGuessed = 0;
+      lastMsgSig = ''; lastBoardSig = ''; // force a fresh render for the new turn
       redraw(g.strokes);
       sound.turn();
     }
@@ -226,8 +243,13 @@ export default {
       stopTimer();
     }
 
-    renderMessages(g.messages, view.you);
-    renderBoard(g);
+    // Only rebuild chat / board when their data actually changed — avoids DOM
+    // thrash competing with the canvas draw path on every state event.
+    const n = g.messages.length;
+    const msgSig = n + '|' + (n ? JSON.stringify(g.messages[n - 1]) : '');
+    if (msgSig !== lastMsgSig) { renderMessages(g.messages); lastMsgSig = msgSig; }
+    const boardSig = g.drawerId + '|' + g.guessedIds.join(',') + '|' + g.leaderboard.map((p) => p.id + ':' + p.score).join(',');
+    if (boardSig !== lastBoardSig) { renderBoard(g); lastBoardSig = boardSig; }
   },
 
   unmount() {
@@ -241,7 +263,9 @@ export default {
     if (api && api.socket) {
       api.socket.off('dg:stroke', onStroke);
       api.socket.off('dg:clear', onClear);
+      api.socket.off('dg:msg', onMsg);
     }
+    lastMsgSig = ''; lastBoardSig = '';
     root = null; canvas = null; ctx = null;
   },
 };

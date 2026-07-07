@@ -8,13 +8,18 @@ let prevSub = null;
 let rafId = null;
 let deadline = 0;
 let total = 1;
+let lastTick = -1;
 
 function stopTimer() { if (rafId) cancelAnimationFrame(rafId); rafId = null; }
 function tickTimer() {
   const bar = root && root.querySelector('.timer-bar > i');
+  const wrap = root && root.querySelector('.timer-bar');
   if (!bar) { stopTimer(); return; }
   const remaining = Math.max(0, deadline - Date.now());
   bar.style.width = Math.min(100, (remaining / total) * 100) + '%';
+  if (wrap) wrap.classList.toggle('warn', remaining < 5000); // urgency cue (#36)
+  const secs = Math.ceil(remaining / 1000);
+  if (remaining > 0 && remaining < 5200 && secs !== lastTick) { lastTick = secs; sound.tick(); } // final-seconds ticks (#37)
   if (remaining > 0) rafId = requestAnimationFrame(tickTimer);
 }
 
@@ -84,7 +89,7 @@ export default {
     if (key !== prevKey) {
       prevKey = key;
       body.innerHTML = g.sub === 'vote' ? renderVote(g) : renderReveal(g);
-      if (g.sub !== prevSub && g.sub === 'reveal') sound.win();
+      if (g.sub !== prevSub && g.sub === 'reveal') sound.correct(); // lighter round sting; save win() for final results (#38)
       prevSub = g.sub;
       if (g.sub === 'vote') {
         total = 22000;

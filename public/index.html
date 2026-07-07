@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#6a5cff" />
   <title>Gooping with Friends</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -12,15 +12,15 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫠</text></svg>" />
 </head>
 <body>
-  <div id="connlost" class="connlost hidden">Reconnecting…</div>
+  <div id="connlost" class="connlost hidden" role="alert">Reconnecting…</div>
   <button id="btn-mute" class="mute-btn" title="Toggle sound" aria-label="Toggle sound">🔊</button>
   <button id="btn-tv" class="mute-btn tv-btn" title="TV / big-screen mode" aria-label="TV mode">📺</button>
   <button id="btn-music" class="mute-btn music-btn" title="Toggle music" aria-label="Toggle music">🎵</button>
   <button id="btn-players" class="mute-btn players-btn" title="Players & standings" aria-label="Players">👥</button>
 
-  <div id="standings-overlay" class="overlay hidden">
+  <div id="standings-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="standings-title">
     <div class="overlay-card">
-      <h2>🏆 Tonight's standings</h2>
+      <h2 id="standings-title">🏆 Tonight's standings</h2>
       <div id="standings-list"></div>
       <button class="btn secondary small mt hidden" id="btn-reset-standings">Reset standings</button>
       <button class="btn mt" id="btn-close-standings">Close</button>
@@ -59,6 +59,7 @@
         <label class="field">
           <span>Custom room code (optional)</span>
           <input type="text" id="create-code" maxlength="6" placeholder="leave blank for random" autocomplete="off" />
+          <small class="hint">Only if you're starting a new game — to join a friend, use the Invite code below.</small>
         </label>
         <button class="btn" id="btn-create">Create a game</button>
 
@@ -67,17 +68,18 @@
         <label class="field">
           <span>Invite code</span>
           <input type="text" id="join-code" class="code-input" maxlength="6" placeholder="CODE" autocomplete="off" />
+          <small class="hint">3–6 letters or numbers, from your host.</small>
         </label>
         <button class="btn accent" id="btn-join">Join game</button>
 
         <div class="divider">playing with far-away friends?</div>
         <label class="field">
           <span>Paste a friend's game link</span>
-          <input type="text" id="join-link" placeholder="https://....loca.lt/?code=ABCD" autocomplete="off" />
+          <input type="text" id="join-link" placeholder="Paste the https:// link your friend sent" autocomplete="off" />
         </label>
         <button class="btn secondary" id="btn-openlink">Open link</button>
 
-        <p id="home-error" class="subtle center mt" style="color:var(--bad)"></p>
+        <p id="home-error" class="subtle center mt" role="alert" style="color:#d61f45"></p>
       </div>
     </section>
 
@@ -91,7 +93,7 @@
           <button class="btn ghost small" id="btn-copy-link">Copy link</button>
         </div>
         <button class="btn ghost small" id="btn-online">🌍 Play online</button>
-        <div id="online-status" class="online-status"></div>
+        <div id="online-status" class="online-status" role="status" aria-live="polite"></div>
         <div class="qr-wrap">
           <div id="qr-box"></div>
           <div class="qr-label" id="qr-label">Scan to join</div>
@@ -111,7 +113,7 @@
         <div id="len-picker"></div>
         <div id="custom-area"></div>
         <div id="cat-picker"></div>
-        <p class="subtle center mt" id="lobby-hint"></p>
+        <p class="subtle center mt" id="lobby-hint" role="status" aria-live="polite"></p>
         <button class="btn good mt" id="btn-start">Start game</button>
         <button class="btn secondary mt" id="btn-leave">Leave game</button>
       </div>
@@ -128,7 +130,15 @@
       <div class="card">
         <div class="podium" id="podium"></div>
         <div class="result-list" id="result-list"></div>
-        <p id="results-status" class="subtle center mt"></p>
+        <p id="results-status" class="subtle center mt" role="status" aria-live="polite"></p>
+        <div id="replay-vote" class="replay-vote hidden">
+          <p class="replay-vote-q">Play again?</p>
+          <div class="replay-vote-btns">
+            <button class="btn vote" id="vote-same" data-vote="same">🔁 Same games <span class="vc" id="vote-same-count"></span></button>
+            <button class="btn vote" id="vote-different" data-vote="different">🎲 Different games <span class="vc" id="vote-diff-count"></span></button>
+          </div>
+          <p id="replay-vote-status" class="subtle center"></p>
+        </div>
         <button class="btn mt hidden" id="btn-next-game">▸ Next game</button>
         <button class="btn mt" id="btn-replay">🔁 Play again (same game)</button>
         <button class="btn good mt" id="btn-again">⚙️ Adjust settings / new game</button>
@@ -146,7 +156,7 @@
     <button id="update-dismiss" class="update-x" title="Dismiss" aria-label="Dismiss">✕</button>
   </div>
 
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/vendor/qrcode.js"></script>

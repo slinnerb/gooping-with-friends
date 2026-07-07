@@ -179,7 +179,8 @@ export default {
       if (!text) return;
       if (g.guessed.has(playerId)) return; // already correct, stop guessing
 
-      if (normalize(text) === normalize(g.word)) {
+      const nw = normalize(g.word);
+      if (nw && normalize(text) === nw) { // nw guard: a punctuation/emoji-only word normalizes to '' — don't auto-win
         const remaining = clamp(g.deadline - Date.now(), 0, DRAW_MS);
         const gained = 100 + Math.round(400 * (remaining / DRAW_MS));
         g.guessed.set(playerId, gained);
@@ -192,11 +193,15 @@ export default {
           endTurn(room, ctx);
           return;
         }
-        ctx.broadcast();
+        ctx.broadcast(); // scores changed — full sync (infrequent: once per guesser)
       } else {
+        // A wrong guess only adds one chat line. Send it as a tiny delta instead
+        // of a full-state broadcast (which re-ships the entire stroke array to
+        // every player) — the message is still stored for resync via the view.
         const shown = maybeCensor(text, room.config && room.config.clean);
-        pushMessage(room, { kind: 'chat', name: nameOf(room, playerId), text: shown });
-        ctx.broadcast();
+        const msg = { kind: 'chat', name: nameOf(room, playerId), text: shown };
+        pushMessage(room, msg);
+        ctx.emitToRoom('dg:msg', { turnId: g.turnId, msg });
       }
       return;
     }

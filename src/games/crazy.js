@@ -241,7 +241,8 @@ export default {
       if (g.dSub !== 'drawing' || isDrawer) return;
       const text = String(action.text || '').trim().slice(0, 60);
       if (!text || g.guessed.has(playerId)) return;
-      if (normalize(text) === normalize(g.word)) {
+      const nw = normalize(g.word);
+      if (nw && normalize(text) === nw) { // nw guard: never let an empty-normalizing word auto-win
         const rem = clamp(g.dDeadline - Date.now(), 0, DRAW_MS);
         const gained = 100 + Math.round(300 * (rem / DRAW_MS));
         g.guessed.set(playerId, gained);
@@ -256,8 +257,10 @@ export default {
         }
         ctx.broadcast();
       } else {
-        pushMessage(room, { kind: 'chat', name: nameOf(room, playerId), text });
-        ctx.broadcast();
+        // Wrong guess → tiny delta, not a full stroke-carrying broadcast.
+        const msg = { kind: 'chat', name: nameOf(room, playerId), text };
+        pushMessage(room, msg);
+        ctx.emitToRoom('dg:msg', { turnId: g.turnId, msg });
       }
     } else if (action.type === 'skip') {
       if (room.hostId !== playerId && !isDrawer) return;

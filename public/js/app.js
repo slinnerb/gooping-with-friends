@@ -60,7 +60,7 @@ function renderEmojiPicker() {
   const box = $('#emoji-pick');
   if (!box) return;
   box.innerHTML = EMOJIS.map(
-    (e) => `<button type="button" class="emoji-opt ${e === store.emoji ? 'sel' : ''}" data-emoji="${e}">${e}</button>`
+    (e) => `<button type="button" class="emoji-opt ${e === store.emoji ? 'sel' : ''}" data-emoji="${e}" aria-label="Choose ${e} avatar" aria-pressed="${e === store.emoji}">${e}</button>`
   ).join('');
 }
 function setEmoji(e) {
@@ -120,9 +120,17 @@ function renderStandings() {
   $('#btn-reset-standings').classList.toggle('hidden', !isHost);
 }
 function toggleStandings(open) {
+  const wasOpen = store.standingsOpen;
   store.standingsOpen = open != null ? open : !store.standingsOpen;
   $('#standings-overlay').classList.toggle('hidden', !store.standingsOpen);
-  if (store.standingsOpen) renderStandings();
+  if (store.standingsOpen) {
+    renderStandings();
+    if (!wasOpen) store.standingsReturnFocus = document.activeElement; // remember for restore
+    const close = $('#btn-close-standings');
+    if (close) close.focus(); // move focus into the dialog for keyboard/screen-reader users
+  } else if (wasOpen && store.standingsReturnFocus && typeof store.standingsReturnFocus.focus === 'function') {
+    store.standingsReturnFocus.focus(); // restore focus to whatever opened it
+  }
 }
 
 // ---- Career stats (per device) ----
@@ -288,7 +296,9 @@ function renderOnline(v) {
     btn.classList.remove('hidden');
     btn.disabled = true;
     btn.textContent = 'Starting online link…';
-    status.textContent = '';
+    // Persistent (not just a toast) so a host racing to share doesn't send the
+    // Wi-Fi-only link before the internet link is ready (#33).
+    status.textContent = 'Preparing a link friends can use anywhere — hang tight a few seconds…';
     status.className = 'online-status';
     if (label) label.textContent = 'Scan to join';
   } else {
@@ -323,17 +333,28 @@ function renderLobby(v) {
   store.shareIsPublic = shareLinkIsPublic(v);
   renderQR(store.shareLink);
   renderOnline(v);
+  // Pulse the QR while a better (online) link is still coming up (#59).
+  const qrBox = $('#qr-box');
+  if (qrBox) qrBox.classList.toggle('loading', !!v.publicStarting && !v.public);
 
   // Most friends aren't on the same Wi-Fi, so the host's game should be reachable
-  // over the internet by default. Auto-start the online tunnel once per room (if
-  // it isn't already up / starting / errored) instead of waiting for a tap.
-  // Skip it when the page is already served from a public host — a hosted deploy
-  // needs no tunnel, and starting one would swap its clean URL for a worse one.
+  // over the internet by default. Auto-start the online tunnel once per room, and
+  // retry a bounded number of times on a transient failure instead of latching
+  // offline. Skip it when the page is already served from a public host — a
+  // hosted deploy needs no tunnel, and starting one would swap its clean URL.
   const onPublicHost = !isPrivateHost(location.hostname);
-  if (v.you && v.you.isHost && !onPublicHost && !v.public && !v.publicStarting && !v.publicError
-      && store.autoOnlineRoom !== v.code) {
-    store.autoOnlineRoom = v.code;
-    socket.emit('tunnel:start');
+  if (v.you && v.you.isHost && !onPublicHost && !v.public && !v.publicStarting) {
+    const st = store.autoOnline || {};
+    if (st.code !== v.code) {
+      store.autoOnline = { code: v.code, tries: 1, retryTimer: null };
+      socket.emit('tunnel:start');
+    } else if (v.publicError && st.tries < 3 && !st.retryTimer) {
+      st.retryTimer = setTimeout(() => {
+        st.retryTimer = null; st.tries += 1;
+        const cur = store.view;
+        if (cur && cur.code === v.code && !cur.public && !cur.publicStarting) socket.emit('tunnel:start');
+      }, 2500);
+    }
   }
   if (store.prevPlayers && v.players.length > store.prevPlayers) sound.join();
   store.prevPlayers = v.players.length;
@@ -426,6 +447,8 @@ function renderLobby(v) {
   let canStart = false;
   if (!isHost) {
     hint = queued.length ? 'Waiting for the host to start…' : 'Waiting for the host to choose a game…';
+  } else if (connected <= 1 && !queued.length) {
+    hint = 'Just you so far — share the code, link, or QR above to get friends in!';
   } else if (!queued.length) {
     hint = 'Tap a game above to begin (tap more than one to build a playlist).';
   } else if (connected < need && shortGame) {
@@ -453,7 +476,7 @@ function playerRow(p, v, isHost) {
     <div class="pname">${escapeHtml(p.name)}${me ? ' (you)' : ''}</div>
     ${p.isHost ? '<span class="tag">Host</span>' : ''}
     ${p.connected ? '' : '<span class="subtle">offline</span>'}
-    ${canKick ? `<button class="kick" data-kick="${p.id}" title="Remove">✕</button>` : ''}
+    ${canKick ? `<button class="kick" data-kick="${p.id}" aria-label="Remove ${escapeHtml(p.name)}">✕</button>` : ''}
   </div>`;
 }
 
@@ -485,26 +508,37 @@ function unmountGame() {
 
 // ---- Results ----
 let lastResultsKey = null;
+let lastPodiumSig = null;
 function renderResults(v) {
   const ranked = [...v.players].sort((a, b) => b.score - a.score);
-  const podiumOrder = [ranked[1], ranked[0], ranked[2]].filter(Boolean);
-  const cls = { 0: 'p2', 1: 'p1', 2: 'p3' };
-  const medals = ['🥈', '🥇', '🥉'];
-  $('#podium').innerHTML = podiumOrder
-    .map((p, i) => `<div class="col ${cls[i]}">
-        <div class="pn">${p.emoji ? p.emoji + ' ' : ''}${escapeHtml(p.name)}</div>
-        <div class="bar">${medals[i]}</div>
-        <div class="ps">${p.score} pts</div>
-      </div>`)
-    .join('');
+  // Only rebuild the podium + list when the standings actually change — otherwise
+  // a play-again vote (which re-renders results) would replay the rise animation.
+  const podiumSig = v.code + '|' + ranked.map((p) => p.id + ':' + p.score + ':' + p.emoji).join(',');
+  if (podiumSig !== lastPodiumSig) {
+    lastPodiumSig = podiumSig;
+    // Keep each slot's medal bound to its rank so a missing 2nd/3rd place can't
+    // shift a medal onto the wrong player (e.g. a lone winner getting silver).
+    const podium = [
+      { p: ranked[1], medal: '🥈', cls: 'p2' },
+      { p: ranked[0], medal: '🥇', cls: 'p1' },
+      { p: ranked[2], medal: '🥉', cls: 'p3' },
+    ].filter((e) => e.p);
+    $('#podium').innerHTML = podium
+      .map((e) => `<div class="col ${e.cls}">
+          <div class="pn">${e.p.emoji ? e.p.emoji + ' ' : ''}${escapeHtml(e.p.name)}</div>
+          <div class="bar">${e.medal}</div>
+          <div class="ps">${e.p.score} pts</div>
+        </div>`)
+      .join('');
 
-  $('#result-list').innerHTML = ranked
-    .map((p, i) => `<div class="player">
-        <div class="avatar" style="background:${avatarColor(p.id)}">${avatarInner(p)}</div>
-        <div class="pname">${i + 1}. ${escapeHtml(p.name)}${p.id === v.you.id ? ' (you)' : ''}</div>
-        <div class="pscore">${p.score} pts</div>
-      </div>`)
-    .join('');
+    $('#result-list').innerHTML = ranked
+      .map((p, i) => `<div class="player">
+          <div class="avatar" style="background:${avatarColor(p.id)}">${avatarInner(p)}</div>
+          <div class="pname">${i + 1}. ${escapeHtml(p.name)}${p.id === v.you.id ? ' (you)' : ''}</div>
+          <div class="pscore">${p.score} pts</div>
+        </div>`)
+      .join('');
+  }
 
   const isHost = v.you.isHost;
   const session = v.session;
@@ -525,6 +559,27 @@ function renderResults(v) {
   replayBtn.textContent = isPlaylist ? '🔁 Replay whole playlist' : '🔁 Play again (same game)';
 
   $('#btn-again').classList.toggle('hidden', !isHost);
+
+  // Play-again vote — shown to everyone once the run is complete. A majority of
+  // connected players auto-triggers replay (same games) or back-to-lobby (different).
+  const votePanel = $('#replay-vote');
+  const rv = !moreGames ? v.replay : null;
+  if (votePanel) {
+    votePanel.classList.toggle('hidden', !rv);
+    if (rv) {
+      $('#vote-same-count').textContent = rv.same ? `· ${rv.same}` : '';
+      $('#vote-diff-count').textContent = rv.different ? `· ${rv.different}` : '';
+      $('#vote-same').classList.toggle('picked', rv.yourVote === 'same');
+      $('#vote-different').classList.toggle('picked', rv.yourVote === 'different');
+      const cast = rv.same + rv.different;
+      const vs = $('#replay-vote-status');
+      if (vs) {
+        vs.textContent = rv.yourVote
+          ? `${cast}/${rv.connected} voted — ${rv.needed} agreeing decides it. Tap again to change.`
+          : `Vote to keep playing — ${rv.needed} of ${rv.connected} agreeing starts it.`;
+      }
+    }
+  }
 
   const status = $('#results-status');
   if (status) {
@@ -628,7 +683,10 @@ function rememberName(name) {
   localStorage.setItem('pwf.name', name);
 }
 function homeError(msg) {
-  $('#home-error').textContent = msg || '';
+  const el = $('#home-error');
+  if (!el) return;
+  el.style.color = '#d61f45'; // errors are red; the invite-welcome path overrides to green after
+  el.textContent = msg || '';
 }
 
 function createGame() {
@@ -647,7 +705,8 @@ function joinGame() {
   const name = getName();
   const code = $('#join-code').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!name) { homeError('Enter your name first.'); $('#name-input').focus(); return; }
-  if (code.length < 3 || code.length > 6) { homeError('Enter the invite code (3–6 characters).'); return; }
+  if (!code) { homeError('Enter the invite code your host gave you.'); $('#join-code').focus(); return; }
+  if (code.length < 3) { homeError('That code looks too short — 3–6 letters or numbers.'); $('#join-code').focus(); return; }
   rememberName(name);
   homeError('');
   socket.emit('room:join', { playerId: store.playerId, secret: store.secret, name, emoji: store.emoji, code }, (res) => {
@@ -718,6 +777,8 @@ function bind() {
   $('#btn-players').addEventListener('click', () => toggleStandings());
   $('#btn-close-standings').addEventListener('click', () => toggleStandings(false));
   $('#standings-overlay').addEventListener('click', (e) => { if (e.target.id === 'standings-overlay') toggleStandings(false); });
+  // Escape closes the standings dialog (keyboard-accessible modal, #55).
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && store.standingsOpen) toggleStandings(false); });
   $('#standings-list').addEventListener('click', (e) => {
     const k = e.target.closest('[data-kick]');
     if (k) socket.emit('room:kick', k.dataset.kick);
@@ -822,21 +883,52 @@ function bind() {
     else homeError('Paste a game link first.');
   });
   $('#btn-online').addEventListener('click', () => socket.emit('tunnel:start'));
-  $('#btn-start').addEventListener('click', () => socket.emit('game:start'));
+  // Surface why a start/replay did nothing (e.g. "Need 3 players for Quip Lash").
+  const startGameAck = (res) => { if (res && !res.ok) toast(res.error || 'Could not start the game.'); };
+  $('#btn-start').addEventListener('click', () => socket.emit('game:start', {}, startGameAck));
   $('#btn-leave').addEventListener('click', leaveGame);
   $('#btn-again').addEventListener('click', () => socket.emit('game:lobby'));
-  $('#btn-replay').addEventListener('click', () => socket.emit('game:start'));
+  $('#btn-replay').addEventListener('click', () => socket.emit('game:start', {}, startGameAck));
+  $('#vote-same').addEventListener('click', () => { socket.emit('results:vote', 'same'); sound.select(); });
+  $('#vote-different').addEventListener('click', () => { socket.emit('results:vote', 'different'); sound.select(); });
   $('#btn-next-game').addEventListener('click', () => { socket.emit('game:next'); sound.select(); });
   $('#btn-save-img').addEventListener('click', saveResultsImage);
   $('#btn-results-leave').addEventListener('click', leaveGame);
 }
 
 async function copy(text, msg = 'Copied!') {
+  // navigator.clipboard is unavailable on http:// (the LAN-fallback share path)
+  // and some mobile browsers — fall back to execCommand, and only if THAT fails
+  // tell the user to copy it by hand rather than silently pretending it worked.
   try {
-    await navigator.clipboard.writeText(text);
-    toast(msg);
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      toast(msg);
+      return;
+    }
+    throw new Error('no clipboard api');
   } catch {
-    toast(text);
+    if (legacyCopy(text)) { toast(msg); return; }
+    toast('Couldn’t copy automatically — long-press to copy it.');
+  }
+}
+
+// Last-resort copy for non-secure contexts (LAN http links) where the async
+// Clipboard API is blocked. Returns true if the copy succeeded.
+function legacyCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
   }
 }
 
@@ -860,8 +952,14 @@ socket.on('connect', () => {
   $('#connlost').classList.add('hidden');
   // Re-bind this fresh socket to our room after a reconnect or page refresh.
   if (store.activeCode && store.name) {
+    const wasInGame = !!store.view; // distinguish a mid-session drop from a first load
     socket.emit('room:join', { playerId: store.playerId, secret: store.secret, name: store.name, emoji: store.emoji, code: store.activeCode }, (res) => {
-      if (res && !res.ok) setActiveCode(null); // room is gone — fall back to home
+      if (res && !res.ok) {
+        // The room is gone (e.g. everyone was offline past the cleanup TTL).
+        // Say so instead of silently dumping the user back on the home screen.
+        setActiveCode(null);
+        if (wasInGame) { store.view = null; unmountGame(); showScreen('home'); toast(res.error || 'That game has ended.'); }
+      }
     });
   }
 });
@@ -904,12 +1002,24 @@ initVersion();
 (function autojoin() {
   const params = new URLSearchParams(location.search);
   const code = (params.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-  if (code) {
-    const inviteUrl = location.href; // capture before we strip ?code from the bar
-    $('#join-code').value = code;
-    history.replaceState(null, '', location.pathname);
-    maybeOfferApp(inviteUrl);
-    if (store.name) { setTimeout(joinGame, 150); }
-    else $('#name-input').focus();
+  if (!code) return;
+  const inviteUrl = location.href; // capture before we strip ?code from the bar
+  $('#join-code').value = code;
+  history.replaceState(null, '', location.pathname);
+  maybeOfferApp(inviteUrl);
+  // The URL code is authoritative — override any stale sessionStorage room so we
+  // join the RIGHT room, exactly once (the connect handler joins store.activeCode
+  // when the socket connects; if it's already connected, do it here instead).
+  setActiveCode(code);
+  if (store.name) {
+    if (socket.connected) joinGame();
+    // else: the 'connect' handler will join store.activeCode when it fires
+  } else {
+    // First-time invitee: make it obvious the link worked and what to do next,
+    // instead of dropping them on a bare form with a blinking cursor.
+    homeError('');
+    const hint = $('#home-error');
+    if (hint) { hint.style.color = 'var(--good)'; hint.textContent = `You're invited to game ${code}! Enter your name above to join.`; }
+    $('#name-input').focus();
   }
 })();

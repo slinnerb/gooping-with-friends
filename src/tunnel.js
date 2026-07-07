@@ -24,7 +24,13 @@ function cloudflaredBin() {
   return null;
 }
 
-function startCloudflared(port) {
+// Fire the death callback at most once per live tunnel, so the caller can clear
+// the now-dead URL and try to bring a new one up.
+function notifyDeath(onDeath) {
+  if (typeof onDeath === 'function') { try { onDeath(); } catch { /* ignore */ } }
+}
+
+function startCloudflared(port, onDeath) {
   return new Promise((resolve, reject) => {
     const bin = cloudflaredBin();
     if (!bin) {
@@ -53,7 +59,7 @@ function startCloudflared(port) {
     });
     child.on('exit', () => {
       if (!settled) { settled = true; reject(new Error('cloudflared exited before a URL appeared')); }
-      else active = null; // tunnel went down; let the host start a new one
+      else { active = null; notifyDeath(onDeath); } // was live and went down
     });
     setTimeout(() => {
       if (!settled) { settled = true; try { child.kill(); } catch { /* ignore */ } reject(new Error('cloudflared timed out')); }
@@ -61,25 +67,23 @@ function startCloudflared(port) {
   });
 }
 
-async function startLocaltunnel(port) {
+async function startLocaltunnel(port, onDeath) {
   const t = await localtunnel({ port });
   active = { url: t.url, stop: () => { try { t.close(); } catch { /* ignore */ } } };
-  t.on('close', () => { if (active && active.url === t.url) active = null; });
+  t.on('close', () => { if (active && active.url === t.url) { active = null; notifyDeath(onDeath); } });
   return t.url;
 }
 
-export async function startTunnel(port) {
+// onDeath (optional) is invoked if the tunnel dies AFTER handing out a URL, so
+// the host UI stops advertising a dead link and can restart it.
+export async function startTunnel(port, onDeath) {
   if (active) return active.url;
   try {
-    return await startCloudflared(port);
+    return await startCloudflared(port, onDeath);
   } catch (err) {
     console.warn('Cloudflare tunnel unavailable, falling back to localtunnel:', err.message);
-    return startLocaltunnel(port);
+    return startLocaltunnel(port, onDeath);
   }
-}
-
-export function getTunnelUrl() {
-  return active ? active.url : null;
 }
 
 export function stopTunnel() {

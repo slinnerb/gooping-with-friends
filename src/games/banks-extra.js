@@ -1,6 +1,11 @@
 // Additional question banks: three trades (plumbing, electrical, HVAC) plus
 // topic expansions for alcohol, medical, and USA & Canada. Kept separate to
 // keep trivia.js manageable. Duplicate questions are removed at runtime.
+//
+// CONVENTION: the correct option is listed FIRST (answer: 0). Option order is
+// shuffled at game time (shuffleQuestion in trivia.js), so there's no player-
+// facing position bias — but if you reorder options, keep the right one at
+// index 0 (or update `answer`). validateBanks() in trivia.js flags mistakes.
 
 export const plumbing = [
   { q: "What is the primary purpose of a P-trap under a sink?", options: ["To hold water that blocks sewer gases from entering the home", "To slow down the flow of water into the drain", "To filter debris before it reaches the main line", "To increase water pressure at the faucet"], answer: 0 },
@@ -215,7 +220,6 @@ export const medicalExtra = [
   { q: "Which English physician first described the circulation of blood?", options: ["William Harvey", "Edward Jenner", "Joseph Lister", "Alexander Fleming"], answer: 0 },
   { q: "What is the basic functional unit of the nervous system?", options: ["Neuron", "Nephron", "Alveolus", "Villus"], answer: 0 },
   { q: "Which vitamin is needed for proper blood clotting?", options: ["Vitamin K", "Vitamin C", "Vitamin D", "Vitamin B6"], answer: 0 },
-  { q: "What is the main pigment in red blood cells that binds oxygen?", options: ["Hemoglobin", "Melanin", "Keratin", "Chlorophyll"], answer: 0 },
   { q: "The medical prefix nephro- relates to which organ?", options: ["Kidney", "Liver", "Lung", "Heart"], answer: 0 },
   { q: "How many lobes does the right lung have?", options: ["Three", "Two", "Four", "One"], answer: 0 },
   { q: "Which bone protects the brain?", options: ["The skull", "The sternum", "The pelvis", "The scapula"], answer: 0 },
@@ -266,7 +270,6 @@ export const usacanadaExtra = [
   { q: "Which US state shares the longest border with Mexico?", options: ["Texas", "Arizona", "California", "New Mexico"], answer: 0 },
   { q: "Which Canadian territory has Whitehorse as its capital?", options: ["Yukon", "Northwest Territories", "Nunavut", "Alberta"], answer: 0 },
   { q: "Which US state is known as the Aloha State?", options: ["Hawaii", "Florida", "California", "Alaska"], answer: 0 },
-  { q: "Which US city is home to the Statue of Liberty?", options: ["New York City", "Boston", "Philadelphia", "Baltimore"], answer: 0 },
   { q: "Which Canadian city is known for the Calgary Stampede?", options: ["Calgary", "Edmonton", "Winnipeg", "Regina"], answer: 0 },
   { q: "Which two US states are not part of the contiguous mainland?", options: ["Alaska and Hawaii", "Texas and Florida", "Maine and Vermont", "Oregon and Nevada"], answer: 0 },
   { q: "The Liberty Bell is a historic landmark in which US city?", options: ["Philadelphia", "Boston", "Washington", "New York City"], answer: 0 },

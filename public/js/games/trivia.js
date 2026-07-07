@@ -9,6 +9,8 @@ let deadline = 0;
 let total = 1;
 let prevSub = null;
 let lastTick = -1;
+let prevScores = {}; // last-reveal scores, to flash rows that just gained (#58)
+let lastRevealSig = null; // avoid re-rendering reveal (and killing the flash) on a redundant broadcast
 
 function stopTimer() {
   if (rafId) cancelAnimationFrame(rafId);
@@ -30,10 +32,10 @@ function tickTimer() {
   if (remaining > 0) rafId = requestAnimationFrame(tickTimer);
 }
 
-function miniBoard(lb) {
+function miniBoard(lb, gained) {
   const top = lb.slice(0, 5);
   return `<div class="mini-board">${top
-    .map((p) => `<div class="mrow"><span>${p.emoji ? p.emoji + ' ' : ''}${escapeHtml(p.name)}</span><b>${p.score}</b></div>`)
+    .map((p) => `<div class="mrow${gained && gained.has(p.id) ? ' gained' : ''}"><span>${p.emoji ? p.emoji + ' ' : ''}${escapeHtml(p.name)}</span><b>${p.score}</b></div>`)
     .join('')}</div>`;
 }
 
@@ -74,12 +76,18 @@ function renderReveal(g) {
       const isCorrect = i === g.correct;
       const chosen = g.yourChoice === i ? 'chosen' : '';
       const dim = !isCorrect ? 'dim' : '';
+      // A non-color cue (✓ / ✗) so right vs wrong survives for colorblind players (#53).
+      const mark = isCorrect ? ' <b class="q-mark">✓</b>' : (chosen ? ' <b class="q-mark">✗</b>' : '');
       return `<button class="q-opt ${isCorrect ? 'correct' : ''} ${chosen} ${dim}" disabled data-c="${i}">
-        <span class="sym">${SYMBOLS[i]}</span><span>${escapeHtml(opt)}</span>
+        <span class="sym">${SYMBOLS[i]}</span><span>${escapeHtml(opt)}${mark}</span>
         <span class="count">${g.counts[i] || 0}</span>
       </button>`;
     })
     .join('');
+  // Flash mini-board rows whose score just rose this reveal (#58).
+  const gained = new Set();
+  for (const p of g.leaderboard) if ((prevScores[p.id] || 0) < p.score) gained.add(p.id);
+  for (const p of g.leaderboard) prevScores[p.id] = p.score;
   return `
     <div class="game-top">
       <div class="gt-title">😈 ${escapeHtml(g.category)}</div>
@@ -87,7 +95,7 @@ function renderReveal(g) {
     </div>
     <div class="q-result-banner">${banner}</div>
     <div class="q-options">${opts}</div>
-    <div style="margin-top:16px">${miniBoard(g.leaderboard)}</div>
+    <div style="margin-top:16px">${miniBoard(g.leaderboard, gained)}</div>
   `;
 }
 
@@ -99,6 +107,8 @@ export default {
     api = a;
     prevSub = null;
     lastTick = -1;
+    prevScores = {};
+    lastRevealSig = null;
     root.innerHTML = '<div id="trivia-body"></div>';
     root.addEventListener('click', onClick);
   },
@@ -109,6 +119,7 @@ export default {
     const body = $('#trivia-body', root);
     if (g.sub === 'question') {
       if (prevSub !== 'question') lastTick = -1;
+      lastRevealSig = null; // next reveal should render fresh
       body.innerHTML = renderQuestion(g);
       total = g.timeTotal || 20000;
       deadline = Date.now() + (g.timeLeft || 0);
@@ -120,7 +131,10 @@ export default {
         else if (g.yourChoice != null) sound.wrong();
       }
       stopTimer();
-      body.innerHTML = renderReveal(g);
+      // Only rebuild the reveal when its content changes — an unrelated broadcast
+      // (a join/leave) mid-reveal would otherwise tear down the score-flash mid-animation.
+      const sig = g.index + '|' + g.correct + '|' + (g.counts || []).join(',') + '|' + g.leaderboard.map((p) => p.id + ':' + p.score).join(',');
+      if (sig !== lastRevealSig) { lastRevealSig = sig; body.innerHTML = renderReveal(g); }
     }
     prevSub = g.sub;
   },

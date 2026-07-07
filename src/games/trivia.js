@@ -327,7 +327,7 @@ const BANKS = {
     { q: "A Long Island Iced Tea contains how much actual tea?", options: ["None", "A splash", "Half", "It's all tea"], answer: 0 },
     { q: "What does 'BAC' stand for?", options: ["Blood Alcohol Concentration", "Beer And Chasers", "Big Ass Cup", "Booze Allowed, Captain"], answer: 0 },
     { q: "Which hangover 'cure' actually has some science behind it?", options: ["Water and sleep", "Hair of the dog", "Greasy fry-up", "Prayer"], answer: 0 },
-    { q: "Tequila is made from which plant?", options: ["Agave", "Cactus", "Hops", "Pure regret"], answer: 0 },
+    { q: "Tequila comes from which plant?", options: ["Agave", "Cactus", "Hops", "Pure regret"], answer: 0 },
     { q: "'Pregaming' means?", options: ["Drinking before going out", "Stretching", "Warming up the Xbox", "Sobering up"], answer: 0 },
     { q: "Which usually gives the nastiest hangover?", options: ["Dark liquors", "Vodka", "Water", "White wine"], answer: 0 },
     { q: "To 'shotgun' a beer, you?", options: ["Puncture and chug it", "Sip it politely", "Age it 10 years", "Pour it out"], answer: 0 },
@@ -349,7 +349,7 @@ const BANKS = {
   ],
   gk: [
     { q: "What's the capital of Australia?", options: ["Canberra", "Sydney", "Your mum's place", "Melbourne"], answer: 0 },
-    { q: "How many bones are in the adult human body?", options: ["206", "300", "Twelve", "Depends on the night"], answer: 0 },
+    { q: "How many bones does an adult human skeleton have?", options: ["206", "300", "Twelve", "Depends on the night"], answer: 0 },
     { q: "Which planet spins on its side and is the butt of every joke?", options: ["Uranus", "Mars", "Venus", "Pluto"], answer: 0 },
     { q: "Most abundant gas in Earth's atmosphere?", options: ["Nitrogen", "Oxygen", "Fart gas", "Carbon dioxide"], answer: 0 },
     { q: "How many hearts does an octopus have?", options: ["Three", "One", "Eight", "Zero, like my ex"], answer: 0 },
@@ -380,6 +380,20 @@ BANKS.hvac = extra.hvac;
 BANKS.alcohol = BANKS.alcohol.concat(extra.alcoholExtra);
 BANKS.medical = BANKS.medical.concat(extra.medicalExtra);
 BANKS.usacanada = BANKS.usacanada.concat(extra.usacanadaExtra);
+
+// Dev-time safety net for hand-authored banks: catch any question whose `answer`
+// index doesn't point at a real option (the easy mistake when reordering options).
+// Logs rather than throws so a single bad edit can't take the whole app down.
+function validateBanks() {
+  for (const [cat, list] of Object.entries(BANKS)) {
+    list.forEach((q, i) => {
+      if (!Array.isArray(q.options) || q.options.length !== 4 || q.options[q.answer] == null) {
+        console.error(`Bad trivia question in "${cat}" #${i}: ${q.q}`);
+      }
+    });
+  }
+}
+validateBanks();
 
 // Drop duplicate questions (same question text) when building a pool.
 function dedupeQuestions(list) {
@@ -429,7 +443,9 @@ function poolFor(room) {
   }
   if (ids.includes('custom')) pool = pool.concat(room.config.customQuestions || []);
   if (!pool.length) pool = buildPool('everything', clean).slice(); // never end up empty
-  return dedupeQuestions(pool);
+  // Both built-in branches are already deduped; only the custom concat can add a
+  // fresh collision, so skip re-walking the whole ~550-question pool otherwise.
+  return ids.includes('custom') ? dedupeQuestions(pool) : pool;
 }
 
 // Whether the chosen categories are *only* an empty custom set — the one case we

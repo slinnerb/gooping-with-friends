@@ -9,13 +9,18 @@ let rafId = null;
 let deadline = 0;
 let total = 1;
 let amHost = false;
+let lastTick = -1;
 
 function stopTimer() { if (rafId) cancelAnimationFrame(rafId); rafId = null; }
 function tickTimer() {
   const bar = root && root.querySelector('.timer-bar > i');
+  const wrap = root && root.querySelector('.timer-bar');
   if (!bar) { stopTimer(); return; }
   const remaining = Math.max(0, deadline - Date.now());
   bar.style.width = Math.min(100, (remaining / total) * 100) + '%';
+  if (wrap) wrap.classList.toggle('warn', remaining < 5000); // urgency cue (#36)
+  const secs = Math.ceil(remaining / 1000);
+  if (remaining > 0 && remaining < 5200 && secs !== lastTick) { lastTick = secs; sound.tick(); } // final-seconds ticks (#37)
   if (remaining > 0) rafId = requestAnimationFrame(tickTimer);
 }
 
@@ -61,6 +66,8 @@ function renderGuess(g) {
     return head + spectrumBar(g, `<div class="wl-marker live" id="wl-live" style="left:${start}%">🔘</div>`) +
       `<input type="range" id="wl-slider" min="0" max="100" value="${start}" class="wl-slider">
        <button class="btn" id="wl-lock">Lock in guess</button>` +
+      // The active guesser also needs to see how many others have locked in (#27).
+      `<div class="quip-wait" style="padding:8px 0 0"><b id="wl-count">${g.guessedCount || 0}/${Math.max(0, g.playerCount - 1)}</b> locked in</div>` +
       `<div style="margin-top:14px">${miniBoard(g.leaderboard)}</div>`;
   }
   const waitMsg = g.isReader ? 'Guessers are sliding their dials…' : g.youGuessed ? '✅ Locked in! Waiting…' : 'Guessing…';
@@ -112,7 +119,7 @@ export default {
         body.insertAdjacentHTML('beforeend', '<button class="btn secondary small mt" id="wl-skip">Skip round ▸ (host)</button>');
       }
 
-      if (g.sub !== prevSub && g.sub === 'reveal') sound.win();
+      if (g.sub !== prevSub && g.sub === 'reveal') sound.correct(); // lighter round sting; save win() for final results (#38)
       prevSub = g.sub;
 
       if (g.sub === 'clue' || g.sub === 'guess') {
