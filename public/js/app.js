@@ -16,6 +16,7 @@ const store = {
   activeCode: sessionStorage.getItem('pwf.room') || null,
   mountedGameId: null,
   shareLink: null,
+  shareIsPublic: false, // true once the copied link is the internet tunnel URL
   prevPlayers: 0,
   customUiType: null,
   draftQ: '',
@@ -243,12 +244,32 @@ function render() {
 }
 
 // ---- Lobby ----
+// A hostname that only resolves on the local machine or the local network —
+// localhost, loopback, link-local, or a private LAN range. Anything else
+// (a real domain or public IP) is reachable from the internet.
+function isPrivateHost(h) {
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '' ||
+    h.startsWith('192.168.') || h.startsWith('10.') || h.startsWith('169.254.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(h);
+}
+
+function isLocalHost(h) {
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '';
+}
+
 function shareBaseFor(v) {
   if (v.public) return v.public; // internet tunnel — works for anyone, anywhere
-  const h = location.hostname;
-  const isLocal = h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '';
-  if (isLocal && v.lan) return v.lan; // running locally: point friends at the LAN address
+  if (isLocalHost(location.hostname) && v.lan) return v.lan; // local: use the LAN address
   return location.origin;
+}
+
+// Will the copied link actually work for a friend anywhere on the internet?
+// True when it's the tunnel URL, or when the page is already served from a
+// public host (e.g. a hosted deploy) — false when it's a LAN/localhost address.
+function shareLinkIsPublic(v) {
+  if (v.public) return true;
+  if (isLocalHost(location.hostname)) return false; // LAN fallback (or nothing)
+  return !isPrivateHost(location.hostname);
 }
 
 function renderOnline(v) {
@@ -299,13 +320,17 @@ function renderQR(url) {
 function renderLobby(v) {
   $('#lobby-code').textContent = v.code;
   store.shareLink = `${shareBaseFor(v)}/?code=${v.code}`;
+  store.shareIsPublic = shareLinkIsPublic(v);
   renderQR(store.shareLink);
   renderOnline(v);
 
   // Most friends aren't on the same Wi-Fi, so the host's game should be reachable
   // over the internet by default. Auto-start the online tunnel once per room (if
   // it isn't already up / starting / errored) instead of waiting for a tap.
-  if (v.you && v.you.isHost && !v.public && !v.publicStarting && !v.publicError
+  // Skip it when the page is already served from a public host — a hosted deploy
+  // needs no tunnel, and starting one would swap its clean URL for a worse one.
+  const onPublicHost = !isPrivateHost(location.hostname);
+  if (v.you && v.you.isHost && !onPublicHost && !v.public && !v.publicStarting && !v.publicError
       && store.autoOnlineRoom !== v.code) {
     store.autoOnlineRoom = v.code;
     socket.emit('tunnel:start');
@@ -731,7 +756,30 @@ function bind() {
   $('#name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') createGame(); });
 
   $('#btn-copy-code').addEventListener('click', () => copy(store.activeCode || ''));
-  $('#btn-copy-link').addEventListener('click', () => copy(store.shareLink || `${location.origin}/?code=${store.activeCode || ''}`, 'Invite link copied!'));
+  $('#btn-copy-link').addEventListener('click', () => {
+    const link = store.shareLink || `${location.origin}/?code=${store.activeCode || ''}`;
+    // If the copied link isn't internet-reachable, it's a LAN-only link — a
+    // friend who isn't on your Wi-Fi will get "site can't be reached". Say so
+    // instead of silently handing out a dead link. The remedy differs by role
+    // and by whether the online link is starting, has failed, or hasn't begun.
+    const v = store.view;
+    const isHost = !!(v && v.you && v.you.isHost);
+    let msg;
+    if (store.shareIsPublic) {
+      msg = 'Invite link copied — works anywhere!';
+    } else if (v && v.publicStarting) {
+      msg = 'Copied a Wi-Fi-only link. Wait for “🌍 Online”, then copy again for a link friends can use over the internet.';
+    } else if (v && v.publicError) {
+      msg = isHost
+        ? 'Copied a Wi-Fi-only link. The online link failed — tap “🌍 Play online” to try again.'
+        : 'Copied a Wi-Fi-only link — only works for friends on this Wi-Fi.';
+    } else {
+      msg = isHost
+        ? 'Copied a Wi-Fi-only link. Tap “🌍 Play online” first for a link friends can use anywhere.'
+        : 'Copied a Wi-Fi-only link — only works for friends on this Wi-Fi.';
+    }
+    copy(link, msg);
+  });
 
   $('#catalog').addEventListener('click', (e) => {
     const card = e.target.closest('[data-game]');

@@ -17,14 +17,26 @@ try {
 } catch { /* keep default */ }
 
 // Best-guess LAN URL so friends on the same Wi-Fi can scan/join.
+// Skips link-local (169.254.x.x APIPA) addresses — those come from virtual or
+// disconnected adapters and aren't routable by anyone, so a friend's browser
+// just times out. Prefers real private LAN ranges (192.168 / 10 / 172.16-31).
 function lanUrl(port) {
   const nets = os.networkInterfaces();
+  const candidates = [];
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] || []) {
-      if (net.family === 'IPv4' && !net.internal) return `http://${net.address}:${port}`;
+      if (net.family !== 'IPv4' || net.internal) continue;
+      if (net.address.startsWith('169.254.')) continue; // link-local — never routable
+      candidates.push(net.address);
     }
   }
-  return null;
+  if (!candidates.length) return null;
+  const isPrivate = (a) =>
+    a.startsWith('192.168.') ||
+    a.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(a);
+  const best = candidates.find(isPrivate) || candidates[0];
+  return `http://${best}:${port}`;
 }
 
 export function startServer(port = process.env.PORT || 3000) {
